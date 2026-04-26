@@ -1,4 +1,4 @@
-# Eleitor Certo 2.0
+# Eleitor Certo
 
 Sistema web para candidatos políticos brasileiros visualizarem dados eleitorais de 2024 em mapa interativo, com copiloto personalizado de campanha.
 
