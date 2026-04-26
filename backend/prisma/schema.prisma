@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model candidatos {
+  sequencial           BigInt    @id(map: "candidato_pkey")
+  ano                  Int?
+  id_eleicao           Int?
+  tipo_eleicao         String?   @db.VarChar(60)
+  data_eleicao         DateTime? @db.Date
+  sigla_uf             String?   @db.VarChar(2)
+  id_municipio         Int?
+  id_municipio_tse     Int?
+  titulo_eleitoral     BigInt?
+  cpf                  String?   @db.VarChar(11)
+  numero               Int?
+  nome                 String?   @db.VarChar(70)
+  nome_urna            String?   @db.VarChar(35)
+  numero_partido       Int?
+  sigla_partido        String?   @db.VarChar(15)
+  cargo                String?   @db.VarChar(20)
+  situacao             String?   @db.VarChar(45)
+  data_nascimento      DateTime? @db.Date
+  idade                Int?
+  genero               String?   @db.VarChar(10)
+  instrucao            String?   @db.VarChar(30)
+  ocupacao             String?   @db.VarChar(70)
+  estado_civil         String?   @db.VarChar(15)
+  nacionalidade        String?   @db.VarChar(40)
+  sigla_uf_nascimento  String?   @db.VarChar(2)
+  municipio_nascimento String?   @db.VarChar(55)
+  email                String?   @db.VarChar(80)
+  raca                 String?   @db.VarChar(10)
+  id_pessoa_hash       String?   @db.VarChar(32)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model copiloto {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  usuario_id        String   @unique @db.Uuid
+  nome_completo     String?
+  nome_urna         String?
+  numero_urna       String?
+  partido           String?
+  cpf               String?
+  titulo_eleitor    String?
+  email_candidato   String?
+  telefone          String?
+  cargo             String?
+  estado            String?
+  cidade_ibge_id    String?
+  cidade_nome       String?
+  macrorregiao      String?
+  microrregiao      String?
+  partidos_aliados  String[] @default([])
+  partidos_oposicao String[] @default([])
+  partidos_neutros  String[] @default([])
+  bandeiras         String[] @default([])
+  perfis_atuacao    String[] @default([])
+  concluido         Boolean  @default(false)
+  criado_em         DateTime @default(now()) @db.Timestamptz(6)
+  atualizado_em     DateTime @default(now()) @db.Timestamptz(6)
+  usuarios          usuarios @relation(fields: [usuario_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+model partidos {
+  sigla     String @id @db.VarChar(20)
+  nome      String @db.VarChar(120)
+  numero    Int?   @db.SmallInt
+  ideologia String @db.VarChar(30)
+}
+
+model perfis_locais_votacao {
+  ano                           Int
+  turno                         Int
+  sigla_uf                      String? @db.VarChar(2)
+  id_municipio                  Int?
+  id_municipio_tse              Int
+  zona                          Int
+  secao                         Int
+  tipo_secao_agregada           Int?
+  numero                        Int?
+  nome                          String? @db.VarChar(100)
+  tipo                          Int?
+  endereco                      String? @db.VarChar(100)
+  bairro                        String? @db.VarChar(80)
+  cep                           String? @db.VarChar(10)
+  telefone                      String? @db.VarChar(20)
+  latitude                      Float?
+  longitude                     Float?
+  situacao                      Int?
+  situacao_zona                 Int?
+  situacao_secao                Int?
+  situacao_localidade           Int?
+  situacao_secao_acessibilidade Int?
+  eleitores_secao               Int?
+
+  @@id([ano, turno, id_municipio_tse, zona, secao], map: "perfil_local_votacao_pkey")
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model resultados_candidato_secao {
+  ano                        Int?
+  turno                      Int?
+  id_eleicao                 Int?
+  tipo_eleicao               String? @db.VarChar(100)
+  data_eleicao               String? @db.VarChar(10)
+  sigla_uf                   String? @db.VarChar(2)
+  id_municipio               Int?
+  id_municipio_tse           Int?
+  zona                       Int?
+  secao                      Int?
+  cargo                      String? @db.VarChar(50)
+  numero_partido             Int?
+  sigla_partido              String? @db.VarChar(30)
+  titulo_eleitoral_candidato BigInt?
+  sequencial_candidato       BigInt?
+  numero_candidato           Int?
+  votos                      Int?
+
+  @@index([ano, sigla_partido, sigla_uf, id_municipio], map: "idx_rcs_partido_uf")
+  @@index([ano, sequencial_candidato], map: "idx_resultados_candidato")
+  @@index([ano, turno, id_municipio_tse, zona, secao], map: "idx_resultados_local")
+  @@index([numero_partido], map: "idx_resultados_partido")
+  @@ignore
+}
+
+model usuarios {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nome          String    @db.VarChar(150)
+  email         String    @unique @db.VarChar(255)
+  senha_hash    String
+  perfil        String    @default("usuario") @db.VarChar(50)
+  ativo         Boolean   @default(true)
+  criado_em     DateTime  @default(now()) @db.Timestamptz(6)
+  atualizado_em DateTime  @default(now()) @db.Timestamptz(6)
+  copiloto      copiloto?
+
+  @@index([email], map: "idx_usuarios_email")
+}
