@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from '@/pages/Login';
-import RegisterPage from '@/pages/Register';
 import CopilotoPage from '@/pages/Copiloto';
 import MapaPage from '@/pages/Mapa';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,7 +22,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/register" element={<Navigate to="/login" replace />} />
         <Route
           path="/copiloto"
           element={
@@ -33,7 +32,7 @@ export default function App() {
           }
         />
         <Route
-          path="/mapa"
+          path="/dashboard"
           element={
             <RequireAuth>
               <RequireCopiloto>

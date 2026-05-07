@@ -61,4 +61,20 @@ export const GeoController = {
       next(err);
     }
   },
+
+  async searchCandidatos(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { uf, cargo, ano, partido, q } = req.query;
+      if (!uf || !cargo || !ano || !q) {
+        res.status(400).json({ error: 'Parâmetros obrigatórios: uf, cargo, ano, q' });
+        return;
+      }
+      const results = await GeoService.searchCandidatos(
+        String(uf), String(cargo), Number(ano), partido ? String(partido) : undefined, String(q),
+      );
+      res.json(results);
+    } catch (err) {
+      next(err);
+    }
+  },
 };

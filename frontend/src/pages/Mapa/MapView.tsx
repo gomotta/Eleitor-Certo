@@ -15,10 +15,15 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+export type ColorMode = 'partido' | 'geral';
+
 interface Props {
   mapData: MapData | null;
   zoomTarget?: GeoTarget;
   filterOpen?: boolean;
+  hideLegend?: boolean;
+  colorMode?: ColorMode;
+  onGeoFocusChange?: (geo?: GeoTarget) => void;
 }
 
 type LayerNivel = 'macro' | 'micro' | 'zona';
@@ -29,8 +34,38 @@ function getLayerForZoom(zoom: number): LayerNivel {
   return 'zona';
 }
 
-function getColor(percentual: number): string {
-  return interpolateRdYlGn(Math.min(percentual / 40, 1));
+// ── Escala de cores ────────────────────────────────────────────────────────────
+
+interface ScaleParams {
+  max: number;      // teto da escala (P90 no modo partido, 40 no modo geral)
+  breaks: number[]; // [P0, P25, P50, P75, P90] para legenda
+}
+
+function getPercentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  if (sorted.length === 1) return sorted[0];
+  const idx = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function computeScale(pcts: number[], mode: ColorMode): ScaleParams {
+  if (mode === 'geral') return { max: 40, breaks: [0, 10, 20, 30, 40] };
+  if (pcts.length === 0) return { max: 1, breaks: [0, 0, 0, 0, 1] };
+  const sorted = [...pcts].filter((v) => v > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return { max: 1, breaks: [0, 0, 0, 0, 1] };
+  const p0  = getPercentile(sorted, 0);
+  const p25 = getPercentile(sorted, 25);
+  const p50 = getPercentile(sorted, 50);
+  const p75 = getPercentile(sorted, 75);
+  const p90 = getPercentile(sorted, 90);
+  return { max: Math.max(p90, 0.0001), breaks: [p0, p25, p50, p75, p90] };
+}
+
+function getColor(pct: number, mode: ColorMode, max: number): string {
+  const threshold = mode === 'partido' ? max : 40;
+  return interpolateRdYlGn(Math.min(pct / Math.max(threshold, 0.0001), 1));
 }
 
 // ── Point-in-polygon (ray casting, GeoJSON coords are [lng, lat]) ─────────────
@@ -70,40 +105,75 @@ function findRegiaoAt(lat: number, lng: number, features: GeoJSON.Feature[]): nu
 
 type StatsMap = Map<number, { votosPartido: number; votosTotal: number }>;
 
-function getPct(feature: GeoJSON.Feature | undefined, statsMap?: StatsMap): number {
+function getPct(
+  feature: GeoJSON.Feature | undefined,
+  statsMap: StatsMap | undefined,
+  mode: ColorMode,
+  totalVotosPartido: number,
+): number {
   const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
   if (statsMap && regiaoId) {
     const s = statsMap.get(regiaoId);
-    if (s) return s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0;
+    if (s) {
+      return mode === 'partido'
+        ? (totalVotosPartido > 0 ? (s.votosPartido / totalVotosPartido) * 100 : 0)
+        : (s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0);
+    }
   }
   return (feature?.properties as any)?.percentual ?? 0;
 }
 
 // ── Municipality bubbles ──────────────────────────────────────────────────────
 
-function MunicipioLayer({ features, partido }: { features: any[]; partido: string }) {
+function MunicipioLayer({
+  features,
+  partido,
+  mode,
+  totalVotosPartido,
+}: {
+  features: any[];
+  partido: string;
+  mode: ColorMode;
+  totalVotosPartido: number;
+}) {
   const maxVotos = useMemo(() => Math.max(...features.map((f) => f.properties.votosPartido), 1), [features]);
   const getRadius = (votos: number) => 6 + Math.sqrt(votos / maxVotos) * 22;
+
+  // Escala P90 calculada a partir dos municípios visíveis
+  const scale = useMemo(() => {
+    const pcts = features.map((f) =>
+      mode === 'partido'
+        ? (totalVotosPartido > 0 ? (f.properties.votosPartido / totalVotosPartido) * 100 : 0)
+        : f.properties.percentual,
+    );
+    return computeScale(pcts, mode);
+  }, [features, mode, totalVotosPartido]);
 
   return (
     <>
       {features.map((f) => {
         const p = f.properties as MunicipioProperties;
         const [lng, lat] = f.geometry.coordinates;
+        const pct = mode === 'partido'
+          ? (totalVotosPartido > 0 ? (p.votosPartido / totalVotosPartido) * 100 : 0)
+          : p.percentual;
         return (
           <CircleMarker
             key={p.municipioTse}
             center={[lat, lng]}
             radius={getRadius(p.votosPartido)}
-            pathOptions={{ fillColor: getColor(p.percentual), fillOpacity: 0.82, color: '#fff', weight: 0.8 }}
+            pathOptions={{ fillColor: getColor(pct, mode, scale.max), fillOpacity: 0.82, color: '#fff', weight: 0.8 }}
             eventHandlers={{
               mouseover: (e) => {
                 const el = document.getElementById('mapa-tooltip');
                 if (el) {
+                  const pctLabel = mode === 'partido'
+                    ? `% votos do partido: <strong>${pct.toFixed(2)}%</strong>`
+                    : `% votos válidos: <strong>${pct.toFixed(1)}%</strong>`;
                   el.innerHTML = `
                     <div class="font-semibold text-gray-800 mb-1">${p.municipioNome}</div>
                     <div class="text-gray-600">Votos ${partido}: <strong>${p.votosPartido.toLocaleString('pt-BR')}</strong></div>
-                    <div class="text-gray-600">% votos válidos: <strong>${p.percentual.toFixed(1)}%</strong></div>
+                    <div class="text-gray-600">${pctLabel}</div>
                     <div class="text-gray-500">Ranking: <strong>#${p.ranking}</strong></div>
                   `;
                   el.style.display = 'block';
@@ -140,11 +210,27 @@ interface PoligonoProps {
   partido: string;
   activeMicroId?: number | null;
   statsMap?: StatsMap;
+  mode: ColorMode;
+  totalVotosPartido: number;
   onClickRegiao?: (feature: GeoJSON.Feature, layer: L.Layer) => void;
 }
 
-const STYLE_DEFAULT = (nivel: 'macro' | 'micro', pct: number) => ({
-  fillColor: getColor(pct),
+function computeScaleFromStats(
+  statsMap: StatsMap | undefined,
+  totalVotosPartido: number,
+  mode: ColorMode,
+): ScaleParams {
+  if (!statsMap || statsMap.size === 0) return computeScale([], mode);
+  const pcts = [...statsMap.values()].map((s) =>
+    mode === 'partido'
+      ? (totalVotosPartido > 0 ? (s.votosPartido / totalVotosPartido) * 100 : 0)
+      : (s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0),
+  );
+  return computeScale(pcts, mode);
+}
+
+const STYLE_DEFAULT = (nivel: 'macro' | 'micro', pct: number, mode: ColorMode, maxPct: number) => ({
+  fillColor: getColor(pct, mode, maxPct),
   fillOpacity: 0.7,
   color: '#fff',
   weight: nivel === 'macro' ? 1.5 : 1,
@@ -152,13 +238,32 @@ const STYLE_DEFAULT = (nivel: 'macro' | 'micro', pct: number) => ({
 
 const STYLE_ACTIVE = { fillOpacity: 0, color: '#555', weight: 2 };
 
-function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, onClickRegiao }: PoligonoProps) {
+function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode, totalVotosPartido, onClickRegiao }: PoligonoProps) {
   const map = useMap();
   const geoJsonRef = useRef<L.GeoJSON>(null);
   const activeMicroIdRef = useRef<number | null>(activeMicroId ?? null);
   useEffect(() => { activeMicroIdRef.current = activeMicroId ?? null; }, [activeMicroId]);
   const statsMapRef = useRef(statsMap);
   useEffect(() => { statsMapRef.current = statsMap; }, [statsMap]);
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  const totalVotosPartidoRef = useRef(totalVotosPartido);
+  useEffect(() => { totalVotosPartidoRef.current = totalVotosPartido; }, [totalVotosPartido]);
+
+  // Escala calculada a partir dos dados agregados por região (P90 no modo partido)
+  const scale = useMemo(
+    () => computeScaleFromStats(statsMap, totalVotosPartido, mode),
+    [statsMap, totalVotosPartido, mode],
+  );
+  const scaleRef = useRef(scale);
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+
+  const getStyle = (feature: GeoJSON.Feature | undefined, activeId: number | null | undefined) => {
+    const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
+    const pct = getPct(feature, statsMapRef.current, modeRef.current, totalVotosPartidoRef.current);
+    const isActive = nivel === 'micro' && activeId != null && regiaoId === activeId;
+    return isActive ? STYLE_ACTIVE : STYLE_DEFAULT(nivel, pct, modeRef.current, scaleRef.current.max);
+  };
 
   // Imperatively update styles when activeMicroId changes (micro only)
   useEffect(() => {
@@ -166,35 +271,22 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, onCli
     if (!layer || nivel !== 'micro') return;
     layer.eachLayer((sublayer) => {
       const feature = (sublayer as any).feature as GeoJSON.Feature;
-      const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
-      const pct = getPct(feature, statsMapRef.current);
-      const isActive = activeMicroId != null && regiaoId === activeMicroId;
-      (sublayer as L.Path).setStyle(isActive ? STYLE_ACTIVE : STYLE_DEFAULT('micro', pct));
+      (sublayer as L.Path).setStyle(getStyle(feature, activeMicroId));
     });
   }, [activeMicroId, nivel]);
 
-  // Imperatively update ALL styles when statsMap changes
+  // Imperatively update ALL styles when statsMap or mode changes
   useEffect(() => {
     const layer = geoJsonRef.current;
     if (!layer) return;
     layer.eachLayer((sublayer) => {
       const feature = (sublayer as any).feature as GeoJSON.Feature;
-      const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
-      const pct = getPct(feature, statsMap);
-      const isActive = nivel === 'micro' && activeMicroIdRef.current != null && regiaoId === activeMicroIdRef.current;
-      (sublayer as L.Path).setStyle(isActive ? STYLE_ACTIVE : STYLE_DEFAULT(nivel, pct));
+      (sublayer as L.Path).setStyle(getStyle(feature, activeMicroIdRef.current));
     });
-  }, [statsMap, nivel]);
+  }, [statsMap, mode, totalVotosPartido, nivel]);
 
   const styleFeature = useCallback(
-    (feature?: GeoJSON.Feature) => {
-      const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
-      const pct = getPct(feature, statsMapRef.current);
-      if (nivel === 'micro' && activeMicroId != null && regiaoId === activeMicroId) {
-        return STYLE_ACTIVE;
-      }
-      return STYLE_DEFAULT(nivel, pct);
-    },
+    (feature?: GeoJSON.Feature) => getStyle(feature, activeMicroId),
     [nivel, activeMicroId],
   );
 
@@ -208,14 +300,19 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, onCli
         const s = regiaoId ? statsMapRef.current?.get(regiaoId) : undefined;
         const votos = s?.votosPartido ?? (p?.votosPartido ?? 0);
         const pct = s
-          ? (s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0)
+          ? (modeRef.current === 'partido'
+              ? (totalVotosPartidoRef.current > 0 ? (s.votosPartido / totalVotosPartidoRef.current) * 100 : 0)
+              : (s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0))
           : (p?.percentual ?? 0);
+        const pctLabel = modeRef.current === 'partido'
+          ? `% votos do partido: <strong>${pct.toFixed(2)}%</strong>`
+          : `% votos válidos: <strong>${pct.toFixed(1)}%</strong>`;
         const el = document.getElementById('mapa-tooltip');
         if (el) {
           el.innerHTML = `
             <div class="font-semibold text-gray-800 mb-1">${nome}</div>
             <div class="text-gray-600">Votos ${partido}: <strong>${votos.toLocaleString('pt-BR')}</strong></div>
-            <div class="text-gray-600">% votos válidos: <strong>${pct.toFixed(1)}%</strong></div>
+            <div class="text-gray-600">${pctLabel}</div>
             ${nivel === 'macro' ? '<div class="text-gray-400 mt-1 text-[10px]">Clique para aproximar</div>' : ''}
           `;
           el.style.display = 'block';
@@ -237,12 +334,7 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, onCli
       layer.on('mouseout', () => {
         const el = document.getElementById('mapa-tooltip');
         if (el) el.style.display = 'none';
-        const s = regiaoId ? statsMapRef.current?.get(regiaoId) : undefined;
-        const pct = s
-          ? (s.votosTotal > 0 ? (s.votosPartido / s.votosTotal) * 100 : 0)
-          : (p?.percentual ?? 0);
-        const isActive = nivel === 'micro' && regiaoId === activeMicroIdRef.current && activeMicroIdRef.current != null;
-        (layer as L.Path).setStyle(isActive ? STYLE_ACTIVE : STYLE_DEFAULT(nivel, pct));
+        (layer as L.Path).setStyle(getStyle(feature, activeMicroIdRef.current));
       });
 
       layer.on('click', (e: L.LeafletMouseEvent) => {
@@ -297,7 +389,21 @@ function ZoomController({
 
 type LayerCache = { macro: GeoJSON.FeatureCollection | null; micro: GeoJSON.FeatureCollection | null };
 
-function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; onNivelChange?: (n: LayerNivel) => void; zoomTarget?: GeoTarget }) {
+function MapLayers({
+  mapData,
+  onNivelChange,
+  zoomTarget,
+  onGeoFocusChange,
+  colorMode,
+  onScaleChange,
+}: {
+  mapData: MapData;
+  onNivelChange?: (n: LayerNivel) => void;
+  zoomTarget?: GeoTarget;
+  onGeoFocusChange?: (geo?: GeoTarget) => void;
+  colorMode: ColorMode;
+  onScaleChange?: (scale: ScaleParams) => void;
+}) {
   const map = useMap();
   const { candidateId } = useCandidateStore();
   const [currentNivel, setCurrentNivel] = useState<LayerNivel>('macro');
@@ -311,7 +417,7 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
       if (!candidateId || layerCache[nivel] || loadingRef.current.has(nivel)) return;
       loadingRef.current.add(nivel);
       try {
-        const resp = await mapaApi.getCamada(candidateId, nivel);
+        const resp = await mapaApi.getCamada(candidateId, nivel, { ano: mapData.metadata.ano });
         setLayerCache((prev) => ({ ...prev, [nivel]: resp.data }));
       } catch (err) {
         console.error(`Erro ao carregar camada ${nivel}:`, err);
@@ -415,13 +521,19 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
     (lat: number, lng: number, zoom: number) => {
       if (zoom < 10) {
         setActiveMicroId(null);
+        onGeoFocusChange?.(undefined);
         return;
       }
       if (!layerCache.micro) return;
       const id = findRegiaoAt(lat, lng, layerCache.micro.features);
       setActiveMicroId((prev) => (prev === id ? prev : id));
+      if (id) {
+        const ft = layerCache.micro.features.find((f) => (f.properties as any)?.regiaoId === id);
+        const nome = ((ft?.properties as any)?.regiaoNome as string | undefined) ?? `Microrregião ${id}`;
+        onGeoFocusChange?.({ type: 'micro', nome, microId: id });
+      }
     },
-    [layerCache.micro],
+    [layerCache.micro, onGeoFocusChange],
   );
 
   const handleClickMacro = useCallback(
@@ -435,15 +547,20 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
   const handleClickMicro = useCallback(
     (_feature: GeoJSON.Feature, layer: L.Layer) => {
       const bounds = (layer as L.Polygon).getBounds();
-      if (bounds.isValid()) map.flyToBounds(bounds, { padding: [20, 20], duration: 0.8 });
+      if (!bounds.isValid()) return;
+      const naturalZoom = map.getBoundsZoom(bounds, false, [20, 20] as any);
+      map.flyTo(bounds.getCenter(), Math.max(naturalZoom, 10), { duration: 0.8 });
     },
     [map],
   );
 
   const partido = mapData.metadata.partido;
+  const totalVotosPartido = mapData.metadata.totalVotosPartido;
   const showMacro = currentNivel === 'macro' && layerCache.macro;
   const showMicro = (currentNivel === 'micro' || currentNivel === 'zona') && layerCache.micro;
   const showCidade = currentNivel === 'zona';
+
+  // Zona: MunicipioLayer calcula sua própria escala internamente (P90 dos municípios visíveis)
 
   // Aggregate mapData votes per micro region (used to color micro polygons after filter)
   const microStats = useMemo<StatsMap>(() => {
@@ -476,6 +593,24 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
     }
     return stats;
   }, [mapData.features, layerCache.macro]);
+
+  // Informa o pai da escala do nível atual para a legenda ficar em sincronia
+  useEffect(() => {
+    if (!onScaleChange) return;
+    let scale: ScaleParams;
+    if (currentNivel === 'zona') {
+      const pcts = mapData.features.map((f) =>
+        colorMode === 'partido'
+          ? (totalVotosPartido > 0 ? (f.properties.votosPartido / totalVotosPartido) * 100 : 0)
+          : f.properties.percentual,
+      );
+      scale = computeScale(pcts, colorMode);
+    } else {
+      const stats = currentNivel === 'macro' ? macroStats : microStats;
+      scale = computeScaleFromStats(stats, totalVotosPartido, colorMode);
+    }
+    onScaleChange(scale);
+  }, [currentNivel, macroStats, microStats, mapData.features, totalVotosPartido, colorMode, onScaleChange]);
 
   const municipioFeatures = useMemo(() => {
     if (!showCidade) return [];
@@ -514,6 +649,8 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
           nivel="macro"
           partido={partido}
           statsMap={macroStats}
+          mode={colorMode}
+          totalVotosPartido={totalVotosPartido}
           onClickRegiao={handleClickMacro}
         />
       )}
@@ -525,12 +662,19 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
           partido={partido}
           activeMicroId={activeMicroId}
           statsMap={microStats}
+          mode={colorMode}
+          totalVotosPartido={totalVotosPartido}
           onClickRegiao={handleClickMicro}
         />
       )}
 
       {showCidade && municipioFeatures.length > 0 && (
-        <MunicipioLayer features={municipioFeatures as any} partido={partido} />
+        <MunicipioLayer
+          features={municipioFeatures as any}
+          partido={partido}
+          mode={colorMode}
+          totalVotosPartido={totalVotosPartido}
+        />
       )}
     </>
   );
@@ -538,26 +682,65 @@ function MapLayers({ mapData, onNivelChange, zoomTarget }: { mapData: MapData; o
 
 // ── Legend + indicator ────────────────────────────────────────────────────────
 
-function MapLegend({ partido, nivel, filterOpen }: { partido: string; nivel: LayerNivel; filterOpen?: boolean }) {
-  const steps = [0, 10, 20, 30, 40];
+function formatPct(v: number): string {
+  if (v === 0) return '0%';
+  if (v >= 10) return `${v.toFixed(0)}%`;
+  if (v >= 1) return `${v.toFixed(1)}%`;
+  return `${v.toFixed(2)}%`;
+}
+
+function MapLegend({
+  partido,
+  nivel,
+  filterOpen,
+  colorMode,
+  scale,
+}: {
+  partido: string;
+  nivel: LayerNivel;
+  filterOpen?: boolean;
+  colorMode: ColorMode;
+  scale: ScaleParams;
+}) {
   const labelMap: Record<LayerNivel, string> = { macro: 'Mesorregião', micro: 'Microrregião', zona: 'Município' };
+
+  // 5 swatches com cores fixas da escala (vermelho → verde)
+  const swatchColors = [0, 0.25, 0.5, 0.75, 1].map((t) => interpolateRdYlGn(t));
+
+  const stepLabels = colorMode === 'geral'
+    ? ['0%', '10%', '20%', '30%', '40%+']
+    : [
+        formatPct(scale.breaks[0]),
+        formatPct(scale.breaks[1]),
+        formatPct(scale.breaks[2]),
+        formatPct(scale.breaks[3]),
+        `${formatPct(scale.breaks[4])}+`,
+      ];
+
+  const titulo = colorMode === 'partido'
+    ? `% votos do partido — ${partido}`
+    : `% votos válidos — ${partido}`;
+
   return (
     <div
       className="absolute bottom-8 z-[1000] bg-white rounded-xl shadow-lg p-3 border border-gray-200 text-xs transition-all duration-300"
       style={{ right: filterOpen ? '336px' : '16px' }}
     >
-      <p className="font-semibold text-gray-700 mb-1">% votos válidos — {partido}</p>
+      <p className="font-semibold text-gray-700 mb-1">{titulo}</p>
       <p className="text-gray-400 text-[10px] mb-2">{labelMap[nivel]}</p>
       <div className="flex items-center gap-0.5">
-        {steps.map((s) => (
-          <div key={s} className="w-9 h-4 rounded-sm" style={{ backgroundColor: interpolateRdYlGn(s / 40) }} />
+        {swatchColors.map((color, i) => (
+          <div key={i} className="w-9 h-4 rounded-sm" style={{ backgroundColor: color }} />
         ))}
       </div>
-      <div className="flex justify-between mt-1 text-gray-500">
-        <span>0%</span><span>10%</span><span>20%</span><span>30%</span><span>40%+</span>
+      <div className="flex justify-between mt-1 text-gray-500 gap-1">
+        {stepLabels.map((l, i) => <span key={i}>{l}</span>)}
       </div>
-      {nivel !== 'zona' && <p className="text-gray-400 mt-2 text-[10px]">Clique para aproximar</p>}
-      {nivel === 'zona' && <p className="text-gray-400 mt-2 text-[10px]">Tamanho = volume de votos</p>}
+      {colorMode === 'partido' && (
+        <p className="text-gray-400 mt-1 text-[10px]">P90 como teto da escala</p>
+      )}
+      {nivel !== 'zona' && <p className="text-gray-400 mt-1 text-[10px]">Clique para aproximar</p>}
+      {nivel === 'zona' && <p className="text-gray-400 mt-1 text-[10px]">Tamanho = volume de votos</p>}
     </div>
   );
 }
@@ -573,25 +756,66 @@ function LayerIndicator({ nivel }: { nivel: LayerNivel }) {
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 
-function MapLayersWithNivelState({ mapData, zoomTarget, filterOpen }: { mapData: MapData; zoomTarget?: GeoTarget; filterOpen?: boolean }) {
+function MapLayersWithNivelState({
+  mapData,
+  zoomTarget,
+  filterOpen,
+  hideLegend,
+  onGeoFocusChange,
+  colorMode,
+}: {
+  mapData: MapData;
+  zoomTarget?: GeoTarget;
+  filterOpen?: boolean;
+  hideLegend?: boolean;
+  onGeoFocusChange?: (geo?: GeoTarget) => void;
+  colorMode: ColorMode;
+}) {
   const [nivel, setNivel] = useState<LayerNivel>('macro');
+  const [scale, setScale] = useState<ScaleParams>({ max: colorMode === 'geral' ? 40 : 1, breaks: [0, 0, 0, 0, 1] });
+
   return (
     <>
-      <MapLayers mapData={mapData} onNivelChange={setNivel} zoomTarget={zoomTarget} />
-      <MapLegend partido={mapData.metadata.partido} nivel={nivel} filterOpen={filterOpen} />
+      <MapLayers
+        mapData={mapData}
+        onNivelChange={setNivel}
+        zoomTarget={zoomTarget}
+        onGeoFocusChange={onGeoFocusChange}
+        colorMode={colorMode}
+        onScaleChange={setScale}
+      />
+      {!hideLegend && (
+        <MapLegend
+          partido={mapData.metadata.partido}
+          nivel={nivel}
+          filterOpen={filterOpen}
+          colorMode={colorMode}
+          scale={scale}
+        />
+      )}
       <LayerIndicator nivel={nivel} />
     </>
   );
 }
 
-export default function MapView({ mapData, zoomTarget, filterOpen }: Props) {
+export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, colorMode = 'partido', onGeoFocusChange }: Props) {
   return (
     <MapContainer center={[-18.5, -44.0]} zoom={6} className="h-full w-full" zoomControl>
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
       />
-      {mapData && <MapLayersWithNivelState mapData={mapData} zoomTarget={zoomTarget} filterOpen={filterOpen} />}
+      {mapData && (
+        <MapLayersWithNivelState
+          key={mapData.metadata.ano}
+          mapData={mapData}
+          zoomTarget={zoomTarget}
+          filterOpen={filterOpen}
+          hideLegend={hideLegend}
+          onGeoFocusChange={onGeoFocusChange}
+          colorMode={colorMode}
+        />
+      )}
     </MapContainer>
   );
 }

@@ -131,29 +131,31 @@ async function getTseToIbgeMap(uf: string): Promise<Map<number, number>> {
   return new Map(rows.map((r) => [r.id_municipio_tse, r.id_municipio]));
 }
 
+type VotosMunicipioRow = { id_municipio_tse: number; votos_partido: number; votos_total: number };
+
 // DB: aggregate votes per municipality
 async function queryVotosPorMunicipio(
   uf: string, cargoDb: string, ano: number, siglaPartido: string,
-): Promise<Array<{ id_municipio_tse: number; votos_partido: number; votos_total: number }>> {
-  try {
-    return await prisma.$queryRaw`
-      SELECT id_municipio_tse,
-        SUM(CASE WHEN sigla_partido = ${siglaPartido} THEN votos ELSE 0 END)::int AS votos_partido,
-        SUM(votos)::int AS votos_total
-      FROM mv_votos_municipio
-      WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
-      GROUP BY id_municipio_tse
-    `;
-  } catch {
-    return await prisma.$queryRaw`
-      SELECT id_municipio_tse,
-        SUM(CASE WHEN sigla_partido = ${siglaPartido} THEN votos ELSE 0 END)::int AS votos_partido,
-        SUM(votos)::int AS votos_total
-      FROM resultados_candidato_secao
-      WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
-      GROUP BY id_municipio_tse
-    `;
-  }
+): Promise<VotosMunicipioRow[]> {
+  const mvRows = await (prisma.$queryRaw<VotosMunicipioRow[]>`
+    SELECT id_municipio_tse,
+      SUM(CASE WHEN sigla_partido = ${siglaPartido} THEN votos ELSE 0 END)::int AS votos_partido,
+      SUM(votos)::int AS votos_total
+    FROM mv_votos_municipio
+    WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
+    GROUP BY id_municipio_tse
+  `.catch(() => [] as VotosMunicipioRow[]));
+  if (mvRows.length > 0) return mvRows;
+
+  return prisma.$queryRaw<VotosMunicipioRow[]>`
+    SELECT id_municipio_tse,
+      SUM(CASE WHEN sigla_partido = ${siglaPartido} THEN votos ELSE 0 END)::int AS votos_partido,
+      SUM(votos)::int AS votos_total
+    FROM resultados_candidato_secao
+    WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
+      AND (turno = 1 OR turno IS NULL)
+    GROUP BY id_municipio_tse
+  `;
 }
 
 // Aggregate votes per macro or micro region
@@ -209,16 +211,18 @@ export const MapaCamadasService = {
     return { cargoDb, siglaPartido, ano, uf, copiloto };
   },
 
-  async getCamadaPoligono(candidatoId: string, nivel: 'macro' | 'micro') {
-    const cacheKey = `camadas:v2:${nivel}:${candidatoId}`;
+  async getCamadaPoligono(candidatoId: string, nivel: 'macro' | 'micro', anoOverride?: number) {
+    const info = await this.getCopilotoInfo(candidatoId);
+    const ano = anoOverride ?? info.ano;
+    const { cargoDb, siglaPartido, uf } = info;
+
+    const cacheKey = `camadas:v3:${nivel}:${candidatoId}:${ano}`;
     const mem = memGet<object>(cacheKey);
     if (mem) return mem;
     const red = await redisGet<object>(cacheKey);
     if (red) { memSet(cacheKey, red, CACHE_TTL_VOTOS); return red; }
 
-    const { cargoDb, siglaPartido, ano, uf } = await this.getCopilotoInfo(candidatoId);
-
-    // Fetch everything in parallel: region list, municipality list, votes, TSE→IBGE map
+    // Fetch everything in parallel
     const [regioes, localidades, votosRaw, tseToIbge] = await Promise.all([
       getRegioes(uf, nivel),
       getLocalidades(uf),

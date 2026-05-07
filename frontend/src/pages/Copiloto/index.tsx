@@ -11,13 +11,13 @@ import ConfirmacaoFinal from './ConfirmacaoFinal';
 const STEP_LABELS = ['Identificação', 'Cargo', 'Reduto', 'Bandeiras', 'Perfil'];
 const TOTAL_STEPS = 5;
 
-const STEP_DESCRIPTIONS: Record<number, { title: string; subtitle: string }> = {
-  1: { title: 'Identificação', subtitle: 'Seus dados pessoais e do seu partido' },
-  2: { title: 'Cargo disputado', subtitle: 'Para qual cargo você vai concorrer?' },
-  3: { title: 'Reduto eleitoral', subtitle: 'Qual é a sua base geográfica de atuação?' },
-  4: { title: 'Bandeiras', subtitle: 'Escolha as 3 causas centrais da sua campanha' },
-  5: { title: 'Perfil de atuação', subtitle: 'Como você prefere agir politicamente?' },
-  6: { title: 'Revisão final', subtitle: 'Confirme os dados antes de ativar seu Copiloto' },
+const STEP_DESCRIPTIONS: Record<number, { title: string; subtitle: string; icon: string }> = {
+  1: { title: 'Identificação', subtitle: 'Seus dados pessoais e do partido', icon: '👤' },
+  2: { title: 'Cargo disputado', subtitle: 'Para qual cargo você vai concorrer?', icon: '🏛️' },
+  3: { title: 'Reduto eleitoral', subtitle: 'Qual é a sua base geográfica de atuação?', icon: '📍' },
+  4: { title: 'Bandeiras', subtitle: 'Escolha as 3 causas centrais da campanha', icon: '🚩' },
+  5: { title: 'Perfil de atuação', subtitle: 'Como você prefere agir politicamente?', icon: '🎯' },
+  6: { title: 'Revisão final', subtitle: 'Confirme os dados antes de ativar o Copiloto', icon: '✅' },
 };
 
 export default function CopilotoPage() {
@@ -29,24 +29,33 @@ export default function CopilotoPage() {
   const stepInfo = STEP_DESCRIPTIONS[currentStep] ?? STEP_DESCRIPTIONS[1];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-primary-50/30 py-10 px-4">
-      <div className="max-w-2xl mx-auto">
+    <div className="min-h-screen bg-white">
+      {/* ── Sticky top bar ── */}
+      <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-gray-100">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+          <BrandLogo />
+          {currentStep <= TOTAL_STEPS && (
+            <span className="text-xs font-medium text-gray-400 bg-gray-50 px-3 py-1 rounded-full border border-gray-100">
+              Etapa {currentStep} de {TOTAL_STEPS}
+            </span>
+          )}
+        </div>
+      </header>
 
-        {/* Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <BrandLogo className="mb-3" />
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-              {currentStep <= TOTAL_STEPS ? 'Configure seu Copiloto' : 'Tudo certo!'}
-            </h1>
-            <p className="text-gray-500 text-sm mt-1">
-              {currentStep <= TOTAL_STEPS
-                ? 'Personalize sua estratégia de campanha passo a passo'
-                : 'Revise e ative seu assistente inteligente de campanha'}
-            </p>
-          </div>
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 pt-5 pb-8">
+        {/* ── Page heading ── */}
+        <div className="mb-4">
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+            {currentStep <= TOTAL_STEPS ? 'Configure seu Copiloto' : 'Revisão final'}
+          </h1>
+          <p className="text-gray-500 text-sm mt-1">
+            {currentStep <= TOTAL_STEPS
+              ? 'Personalize sua estratégia eleitoral passo a passo'
+              : 'Confirme os dados antes de ativar seu assistente'}
+          </p>
         </div>
 
+        {/* ── Stepper ── */}
         {currentStep <= TOTAL_STEPS && (
           <StepperProgress
             currentStep={currentStep}
@@ -55,18 +64,19 @@ export default function CopilotoPage() {
           />
         )}
 
-        {/* Step context */}
+        {/* ── Step context pill ── */}
         {currentStep <= TOTAL_STEPS && (
-          <div className="mb-4 flex items-center gap-2">
-            <div className="w-1 h-8 rounded-full bg-primary-500" />
+          <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
+            <span className="text-xl leading-none">{stepInfo.icon}</span>
             <div>
               <p className="text-sm font-semibold text-gray-900">{stepInfo.title}</p>
-              <p className="text-xs text-gray-400">{stepInfo.subtitle}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{stepInfo.subtitle}</p>
             </div>
           </div>
         )}
 
-        <div className="card p-6 sm:p-8">
+        {/* ── Step card ── */}
+        <div className="card p-5 sm:p-7">
           {currentStep === 1 && <Block1Identificacao onNext={next} />}
           {currentStep === 2 && <Block2Cargo onNext={next} onBack={back} />}
           {currentStep === 3 && <Block3Reduto onNext={next} onBack={back} />}

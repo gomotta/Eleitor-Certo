@@ -4,6 +4,7 @@
   "description": "Backend do sistema Eleitor Certo",
   "main": "dist/server.js",
   "scripts": {
+    "predev": "npx kill-port 3001 || echo porta livre",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",

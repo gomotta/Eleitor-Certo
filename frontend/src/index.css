@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-white text-gray-900 antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
@@ -17,9 +17,15 @@
   .input {
     @apply w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm text-gray-900
            bg-white placeholder-gray-400
-           focus:outline-none focus:ring-2 focus:ring-primary-500/30 focus:border-primary-400
+           hover:border-gray-300
+           focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400
            disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed
-           transition-colors duration-150;
+           transition-colors duration-150
+           shadow-input;
+  }
+
+  .select-input {
+    @apply input appearance-none cursor-pointer pr-10;
   }
 
   .label {
@@ -34,7 +40,7 @@
     @apply inline-flex items-center justify-center px-5 py-2.5 rounded-lg
            bg-primary-600 text-white font-semibold text-sm tracking-tight
            hover:bg-primary-700 active:scale-[0.98]
-           shadow-sm hover:shadow-md
+           shadow-sm hover:shadow
            transition-all duration-150
            disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:active:scale-100;
   }
@@ -48,6 +54,18 @@
   }
 
   .card {
-    @apply bg-white rounded-2xl border border-gray-100 shadow-card;
+    @apply bg-white rounded-2xl shadow-card-md ring-1 ring-black/[0.04];
+  }
+
+  .selection-card {
+    @apply flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all duration-150 cursor-pointer;
+  }
+
+  .selection-card-idle {
+    @apply border-gray-100 bg-white hover:border-primary-200 hover:bg-primary-50/40;
+  }
+
+  .selection-card-active {
+    @apply border-primary-500 bg-primary-50 shadow-sm;
   }
 }

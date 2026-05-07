@@ -35,6 +35,21 @@ interface Props {
   onNext: () => void;
 }
 
+const ChevronDown = () => (
+  <svg className="w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="pt-3 mt-3 border-t border-gray-100 first:pt-0 first:mt-0 first:border-0">
+      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{children}</div>
+    </div>
+  );
+}
+
 export default function Block1Identificacao({ onNext }: Props) {
   const { formData, updateFormData } = useCandidateStore();
   const [partidos, setPartidos] = useState<Partido[]>([]);
@@ -54,15 +69,15 @@ export default function Block1Identificacao({ onNext }: Props) {
   } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      nomeCompleto: formData.nomeCompleto ?? '',
-      nomeUrna: formData.nomeUrna ?? '',
-      numeroUrna: formData.numeroUrna ?? '',
-      partidoSigla: formData.partidoSigla ?? '',
-      partidoNome: formData.partidoNome ?? '',
-      cpf: formData.cpf ?? '',
+      nomeCompleto:  formData.nomeCompleto  ?? '',
+      nomeUrna:      formData.nomeUrna      ?? '',
+      numeroUrna:    formData.numeroUrna    ?? '',
+      partidoSigla:  formData.partidoSigla  ?? '',
+      partidoNome:   formData.partidoNome   ?? '',
+      cpf:           formData.cpf           ?? '',
       tituloEleitor: formData.tituloEleitor ?? '',
-      emailContato: formData.emailContato ?? '',
-      telefone: formData.telefone ?? '',
+      emailContato:  formData.emailContato  ?? '',
+      telefone:      formData.telefone      ?? '',
     },
   });
 
@@ -78,43 +93,68 @@ export default function Block1Identificacao({ onNext }: Props) {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-0">
+
+      {/* Dados pessoais */}
+      <FieldGroup label="Dados pessoais">
         <div className="md:col-span-2">
           <label className="label">Nome Completo *</label>
-          <input {...register('nomeCompleto')} className="input" placeholder="Ex: João da Silva Santos" />
+          <input
+            {...register('nomeCompleto')}
+            className="input"
+            placeholder="Ex: João da Silva Santos"
+          />
           {errors.nomeCompleto && <p className="error">{errors.nomeCompleto.message}</p>}
         </div>
 
         <div>
-          <label className="label">Nome de Urna * <span className="text-gray-400">(máx. 30 chars)</span></label>
-          <input {...register('nomeUrna')} className="input" maxLength={30} placeholder="Ex: JOÃO SILVA" />
+          <label className="label">
+            Nome de Urna *
+            <span className="ml-1 text-gray-400 font-normal text-xs">máx. 30 chars</span>
+          </label>
+          <input
+            {...register('nomeUrna')}
+            className="input"
+            maxLength={30}
+            placeholder="Ex: JOÃO SILVA"
+          />
           {errors.nomeUrna && <p className="error">{errors.nomeUrna.message}</p>}
         </div>
 
         <div>
-          <label className="label">Número de Urna <span className="text-gray-400">(opcional)</span></label>
+          <label className="label">
+            Número de Urna
+            <span className="ml-1 text-gray-400 font-normal text-xs">opcional</span>
+          </label>
           <input {...register('numeroUrna')} className="input" placeholder="Ex: 1234" />
           {errors.numeroUrna && <p className="error">{errors.numeroUrna.message}</p>}
         </div>
 
         <div className="md:col-span-2">
           <label className="label">Partido *</label>
-          <select
-            {...register('partidoSigla')}
-            className="input"
-            onChange={(e) => handlePartidoChange(e.target.value)}
-          >
-            <option value="">Selecione o partido</option>
-            {partidos.map((p) => (
-              <option key={p.sigla} value={p.sigla}>
-                {p.sigla} — {p.nome}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              {...register('partidoSigla')}
+              className="input appearance-none pr-10 cursor-pointer"
+              onChange={(e) => handlePartidoChange(e.target.value)}
+            >
+              <option value="">Selecione o partido</option>
+              {partidos.map((p) => (
+                <option key={p.sigla} value={p.sigla}>
+                  {p.sigla} — {p.nome}
+                </option>
+              ))}
+            </select>
+            <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+              <ChevronDown />
+            </div>
+          </div>
           {errors.partidoSigla && <p className="error">{errors.partidoSigla.message}</p>}
         </div>
+      </FieldGroup>
 
+      {/* Documentos */}
+      <FieldGroup label="Documentos">
         <div>
           <label className="label">CPF *</label>
           <input
@@ -138,10 +178,18 @@ export default function Block1Identificacao({ onNext }: Props) {
           />
           {errors.tituloEleitor && <p className="error">{errors.tituloEleitor.message}</p>}
         </div>
+      </FieldGroup>
 
+      {/* Contato */}
+      <FieldGroup label="Contato">
         <div>
-          <label className="label">E-mail de Contato *</label>
-          <input {...register('emailContato')} type="email" className="input" placeholder="contato@exemplo.com" />
+          <label className="label">E-mail *</label>
+          <input
+            {...register('emailContato')}
+            type="email"
+            className="input"
+            placeholder="contato@exemplo.com"
+          />
           {errors.emailContato && <p className="error">{errors.emailContato.message}</p>}
         </div>
 
@@ -156,10 +204,15 @@ export default function Block1Identificacao({ onNext }: Props) {
           />
           {errors.telefone && <p className="error">{errors.telefone.message}</p>}
         </div>
-      </div>
+      </FieldGroup>
 
-      <div className="flex justify-end pt-4">
-        <button type="submit" className="btn-primary">Avançar →</button>
+      <div className="flex justify-end pt-3">
+        <button type="submit" className="btn-primary">
+          Avançar
+          <svg className="w-4 h-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
     </form>
   );

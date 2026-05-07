@@ -1,13 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BrandLogo } from '@/components/Logo';
 import type { MapData } from './index';
 
 interface Props {
   mapData: MapData | null;
+  anosDisponiveis: number[];
+  selectedCargo: string;
+  cargosDisponiveis: string[];
+  onYearChange: (ano: number) => void;
+  onCargoChange: (cargo: string) => void;
 }
 
 const CARGO_LABELS: Record<string, string> = {
+  todos: 'Todos os cargos',
   'deputado estadual': 'Dep. Estadual',
   'deputado federal': 'Dep. Federal',
   vereador: 'Vereador',
@@ -17,7 +23,107 @@ const CARGO_LABELS: Record<string, string> = {
   presidente: 'Presidente',
 };
 
-export default function MapSidebar({ mapData }: Props) {
+function YearPicker({ ano, anos, onChange }: { ano: number; anos: number[]; onChange: (a: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] bg-primary-50 text-primary-600 font-semibold px-2 py-0.5 rounded-full border border-primary-100 hover:bg-primary-100 transition-colors mt-0.5"
+        title="Trocar ano"
+      >
+        {ano}
+        <svg className={`w-2.5 h-2.5 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden min-w-[72px]">
+          {anos.map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => { onChange(a); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left font-medium transition-colors ${
+                a === ano
+                  ? 'bg-primary-50 text-primary-600'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {a}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CargoPicker({ cargo, cargos, onChange }: { cargo: string; cargos: string[]; onChange: (c: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const allOptions = ['todos', ...cargos];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[10px] bg-gray-50 text-gray-600 font-semibold px-2 py-0.5 rounded-full border border-gray-200 hover:bg-gray-100 transition-colors max-w-[120px]"
+        title="Filtrar por cargo"
+      >
+        <span className="truncate">{CARGO_LABELS[cargo] ?? cargo}</span>
+        <svg className={`w-2.5 h-2.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden min-w-[140px]">
+          {allOptions.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => { onChange(c); setOpen(false); }}
+              className={`w-full px-3 py-1.5 text-xs text-left font-medium transition-colors ${
+                c === cargo
+                  ? 'bg-primary-50 text-primary-600'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {CARGO_LABELS[c] ?? c}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, cargosDisponiveis, onYearChange, onCargoChange }: Props) {
   const navigate = useNavigate();
 
   const stats = useMemo(() => {
@@ -26,16 +132,14 @@ export default function MapSidebar({ mapData }: Props) {
 
     const totalPartido = metadata.totalVotosPartido;
     const totalGeral = features.reduce((s, f) => s + f.properties.votosTotal, 0);
-    const municipios = features.length;
-    const mediaPercentual =
-      features.reduce((s, f) => s + f.properties.percentual, 0) / (municipios || 1);
+    const sharePartido = totalGeral > 0 ? (totalPartido / totalGeral) * 100 : 0;
 
     const top5 = [...features]
       .sort((a, b) => b.properties.votosPartido - a.properties.votosPartido)
       .slice(0, 5)
       .map((f) => f.properties);
 
-    return { totalPartido, totalGeral, municipios, mediaPercentual, top5 };
+    return { totalPartido, totalGeral, sharePartido, top5 };
   }, [mapData]);
 
   const regiao = mapData?.metadata.microrregiao ?? mapData?.metadata.macrorregiao;
@@ -54,18 +158,33 @@ export default function MapSidebar({ mapData }: Props) {
           <h2 className="text-sm font-bold text-gray-900 leading-snug line-clamp-2 flex-1">
             {mapData?.metadata.nomeUrna ?? '—'}
           </h2>
-          <span className="shrink-0 text-[10px] bg-primary-50 text-primary-600 font-semibold px-2 py-0.5 rounded-full border border-primary-100 mt-0.5">
-            {mapData?.metadata.ano ?? '—'}
-          </span>
+          {mapData && anosDisponiveis.length > 1 ? (
+            <YearPicker
+              ano={mapData.metadata.ano}
+              anos={anosDisponiveis}
+              onChange={onYearChange}
+            />
+          ) : (
+            <span className="shrink-0 text-[10px] bg-primary-50 text-primary-600 font-semibold px-2 py-0.5 rounded-full border border-primary-100 mt-0.5">
+              {mapData?.metadata.ano ?? '—'}
+            </span>
+          )}
         </div>
 
-        <p className="text-[11px] text-gray-400 leading-tight">
-          {mapData ? (CARGO_LABELS[mapData.metadata.cargo] ?? mapData.metadata.cargo) : '—'}
-          {' · '}
-          <span className="font-semibold text-gray-600">{mapData?.metadata.partido ?? '—'}</span>
-          {' · '}
-          <span>{mapData?.metadata.uf ?? '—'}</span>
-        </p>
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <p className="text-[11px] text-gray-400 leading-tight">
+            <span className="font-semibold text-gray-600">{mapData?.metadata.partido ?? '—'}</span>
+            {' · '}
+            <span>{mapData?.metadata.uf ?? '—'}</span>
+          </p>
+          {mapData && (
+            <CargoPicker
+              cargo={selectedCargo}
+              cargos={cargosDisponiveis}
+              onChange={onCargoChange}
+            />
+          )}
+        </div>
 
         {regiao && (
           <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-primary-700 bg-primary-50 rounded-lg px-2.5 py-1.5 border border-primary-100">
@@ -83,11 +202,11 @@ export default function MapSidebar({ mapData }: Props) {
           {/* Hero metric */}
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2">
-              Média por município
+              Share de votos válidos
             </p>
             <div className="flex items-end gap-1 mb-2">
               <span className="text-5xl font-extrabold text-gray-900 tracking-tighter leading-none">
-                {stats.mediaPercentual.toFixed(1)}
+                {stats.sharePartido.toFixed(1)}
               </span>
               <span className="text-xl text-gray-400 font-medium mb-1">%</span>
             </div>
@@ -95,12 +214,12 @@ export default function MapSidebar({ mapData }: Props) {
               <div
                 className="h-full rounded-full transition-all duration-700"
                 style={{
-                  width: `${Math.min(stats.mediaPercentual * 2, 100)}%`,
+                  width: `${Math.min(stats.sharePartido * 2, 100)}%`,
                   background: 'linear-gradient(90deg, #4ade80, #16a34a)',
                 }}
               />
             </div>
-            <p className="text-[10px] text-gray-400 mt-1">de votos válidos</p>
+            <p className="text-[10px] text-gray-400 mt-1">do partido no estado</p>
           </div>
 
           {/* Vote totals */}
@@ -127,10 +246,10 @@ export default function MapSidebar({ mapData }: Props) {
               Top 5 Municípios
             </p>
             <div className="space-y-3">
-              {stats.top5.map((m, i) => {
-                const pct = stats.top5[0].votosPartido > 0
-                  ? (m.votosPartido / stats.top5[0].votosPartido) * 100
-                  : 0;
+              {(() => {
+                const maxPct = Math.max(...stats.top5.map((m) => m.percentual), 0.001);
+                return stats.top5.map((m, i) => {
+                const pct = (m.percentual / maxPct) * 100;
                 return (
                   <div key={m.municipioTse}>
                     <div className="flex items-center gap-2 text-xs mb-1">
@@ -153,7 +272,8 @@ export default function MapSidebar({ mapData }: Props) {
                     </div>
                   </div>
                 );
-              })}
+              });
+              })()}
             </div>
           </div>
         </div>

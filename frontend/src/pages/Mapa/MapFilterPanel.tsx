@@ -1,11 +1,14 @@
-import { useEffect, useState, useMemo } from 'react';
-import { geoApi, type Estado, type MacroRegiao, type MicroRegiao, type Partido } from '@/services/api/geo';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { geoApi, type MacroRegiao, type MicroRegiao, type Partido, type CandidatoSugestao } from '@/services/api/geo';
 import { mapaApi } from '@/services/api/mapa';
 import type { MapData } from './index';
 
 export interface GeoTarget {
   type: 'macro' | 'micro' | 'cidade';
   nome: string;
+  macroId?: number;
+  microId?: number;
+  microIds?: number[];
   municipioTse?: number;
 }
 
@@ -19,47 +22,169 @@ interface Props {
   onReset: () => void;
 }
 
+// ── Componente genérico de busca com drilldown ──────────────────────────────
+
+interface SearchItem {
+  id: string | number;
+  label: string;
+  sublabel?: string;
+}
+
+function SearchSelect({
+  label,
+  placeholder = 'Buscar…',
+  items,
+  selected,
+  onSelect,
+  onClear,
+  disabled,
+}: {
+  label: React.ReactNode;
+  placeholder?: string;
+  items: SearchItem[];
+  selected: SearchItem | null;
+  onSelect: (item: SearchItem) => void;
+  onClear: () => void;
+  disabled?: boolean;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    const list = q
+      ? items.filter(
+          (i) =>
+            i.label.toLowerCase().includes(q) ||
+            (i.sublabel?.toLowerCase().includes(q) ?? false),
+        )
+      : items;
+    return list.slice(0, 40);
+  }, [items, query]);
+
+  if (selected) {
+    return (
+      <div>
+        <label className="label">{label}</label>
+        <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 bg-primary-50 border border-primary-200 rounded-lg">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-primary-800 truncate">{selected.label}</p>
+            {selected.sublabel && (
+              <p className="text-[10px] text-primary-500 truncate">{selected.sublabel}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => { onClear(); setQuery(''); }}
+            className="text-primary-400 hover:text-primary-700 flex-shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <div className="relative mt-1">
+        <input
+          type="text"
+          className="input disabled:opacity-50 disabled:cursor-not-allowed"
+          placeholder={disabled ? '—' : placeholder}
+          value={query}
+          disabled={disabled}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+        />
+        {open && !disabled && filtered.length > 0 && (
+          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+            {filtered.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onMouseDown={() => { onSelect(item); setQuery(''); setOpen(false); }}
+                className="w-full text-left px-3 py-2 hover:bg-primary-50 transition-colors border-b border-gray-50 last:border-0"
+              >
+                <p className="text-xs font-medium text-gray-800">{item.label}</p>
+                {item.sublabel && <p className="text-[10px] text-gray-400">{item.sublabel}</p>}
+              </button>
+            ))}
+          </div>
+        )}
+        {open && !disabled && query.length >= 1 && filtered.length === 0 && (
+          <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+            <p className="text-xs text-gray-400">Nenhum resultado</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Painel principal ─────────────────────────────────────────────────────────
+
 export default function MapFilterPanel({ open, onClose, mapData, defaultUF, candidateId, onApply, onReset }: Props) {
-  const [estado, setEstado] = useState(defaultUF);
   const [selectedMacro, setSelectedMacro] = useState<MacroRegiao | null>(null);
   const [selectedMicro, setSelectedMicro] = useState<MicroRegiao | null>(null);
   const [selectedCidade, setSelectedCidade] = useState<{ nome: string; tse: number } | null>(null);
   const [ideologia, setIdeologia] = useState<string | null>(null);
   const [partido, setPartido] = useState<string | null>(null);
+  const [candidatoQuery, setCandidatoQuery] = useState('');
+  const [candidatoSelecionado, setCandidatoSelecionado] = useState<CandidatoSugestao | null>(null);
+  const [sugestoes, setSugestoes] = useState<CandidatoSugestao[]>([]);
+  const [buscandoCandidato, setBuscandoCandidato] = useState(false);
+  const [dropdownAberto, setDropdownAberto] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const [estados, setEstados] = useState<Estado[]>([]);
   const [macros, setMacros] = useState<MacroRegiao[]>([]);
   const [micros, setMicros] = useState<MicroRegiao[]>([]);
   const [partidos, setPartidos] = useState<Partido[]>([]);
 
+  const partidoAtivo = partido ?? mapData?.metadata.partido ?? '';
+  const cargoAtivo = mapData?.metadata.cargo ?? '';
+  const anoAtivo = mapData?.metadata.ano ?? 2022;
+
+  // Busca debounced de candidatos
+  const buscarCandidatos = useCallback((q: string) => {
+    if (!q || q.length < 2 || !cargoAtivo) {
+      setSugestoes([]);
+      return;
+    }
+    setBuscandoCandidato(true);
+    geoApi
+      .searchCandidatos({ uf: defaultUF, cargo: cargoAtivo, ano: anoAtivo, partido: partidoAtivo || undefined, q })
+      .then((r) => { setSugestoes(r.data); setDropdownAberto(true); })
+      .catch(() => setSugestoes([]))
+      .finally(() => setBuscandoCandidato(false));
+  }, [defaultUF, partidoAtivo, cargoAtivo, anoAtivo]);
+
+  const handleCandidatoInput = (q: string) => {
+    setCandidatoQuery(q);
+    setCandidatoSelecionado(null);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => buscarCandidatos(q), 300);
+  };
+
   // Carga inicial
   useEffect(() => {
-    geoApi.getEstados().then((r) => setEstados(r.data));
     geoApi.getPartidos().then((r) => setPartidos(r.data));
-  }, []);
+    if (defaultUF) geoApi.getMacroRegioes(defaultUF).then((r) => setMacros(r.data));
+  }, [defaultUF]);
 
-  // Cascata geográfica
-  useEffect(() => {
-    setSelectedMacro(null);
-    setSelectedMicro(null);
-    setSelectedCidade(null);
-    setMacros([]);
-    setMicros([]);
-    if (estado) {
-      geoApi.getMacroRegioes(estado).then((r) => setMacros(r.data));
-    }
-  }, [estado]);
-
+  // Cascata macro → micro
   useEffect(() => {
     setSelectedMicro(null);
     setMicros([]);
-    if (selectedMacro) {
-      geoApi.getMicroRegioes(selectedMacro.id).then((r) => setMicros(r.data));
-    }
+    if (selectedMacro) geoApi.getMicroRegioes(selectedMacro.id).then((r) => setMicros(r.data));
   }, [selectedMacro]);
 
-  // Cidades derivadas de mapData filtradas pela micro selecionada
+  // Cidades derivadas de mapData, filtradas pela micro se selecionada
   const cidadesDisponiveis = useMemo(() => {
     if (!mapData) return [];
     let features = mapData.features;
@@ -76,14 +201,16 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
   // Reset quando abre o painel
   useEffect(() => {
     if (open) {
-      setEstado(defaultUF);
       setSelectedMacro(null);
       setSelectedMicro(null);
       setSelectedCidade(null);
       setIdeologia(null);
       setPartido(null);
+      setCandidatoQuery('');
+      setCandidatoSelecionado(null);
+      setSugestoes([]);
     }
-  }, [open, defaultUF]);
+  }, [open]);
 
   const ideologias = useMemo(
     () => [...new Set(partidos.map((p) => p.ideologia).filter(Boolean))].sort(),
@@ -98,12 +225,12 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
   const geoTarget: GeoTarget | undefined = selectedCidade
     ? { type: 'cidade', nome: selectedCidade.nome, municipioTse: selectedCidade.tse }
     : selectedMicro
-    ? { type: 'micro', nome: selectedMicro.nome }
+    ? { type: 'micro', nome: selectedMicro.nome, microId: selectedMicro.id }
     : selectedMacro
-    ? { type: 'macro', nome: selectedMacro.nome }
+    ? { type: 'macro', nome: selectedMacro.nome, macroId: selectedMacro.id, microIds: micros.map((m) => m.id) }
     : undefined;
 
-  const needsBackend = estado !== defaultUF || !!partido || !!ideologia;
+  const needsBackend = !!partido || !!ideologia || !!candidatoSelecionado;
 
   const handleApply = async () => {
     if (!mapData) return;
@@ -111,9 +238,10 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
     try {
       if (needsBackend) {
         const resp = await mapaApi.getFilteredDados(candidateId, {
-          estado: estado !== defaultUF ? estado : undefined,
           partido: partido || undefined,
           ideologia: !partido && ideologia ? ideologia : undefined,
+          candidatoSequencial: candidatoSelecionado?.sequencial || undefined,
+          candidatoNomeUrna: candidatoSelecionado?.nome_urna || undefined,
         });
         onApply(resp.data as MapData, geoTarget);
       } else {
@@ -128,15 +256,8 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
 
   return (
     <>
-      {/* Backdrop sutil */}
-      {open && (
-        <div
-          className="absolute inset-0 z-[998]"
-          onClick={onClose}
-        />
-      )}
+      {open && <div className="absolute inset-0 z-[998]" onClick={onClose} />}
 
-      {/* Painel */}
       <div
         className={`absolute inset-y-0 right-0 w-80 bg-white shadow-2xl z-[999] flex flex-col transition-transform duration-300 ease-in-out ${
           open ? 'translate-x-0' : 'translate-x-full'
@@ -150,10 +271,7 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
             </svg>
             <h2 className="font-semibold text-gray-800 text-sm">Filtros do Mapa</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded"
-          >
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -161,116 +279,168 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
         </div>
 
         {/* Conteúdo */}
-        <div className="flex-1 px-4 py-3 space-y-3">
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
 
           {/* ── Localização ── */}
           <section>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Localização</p>
-
             <div className="space-y-2">
-              <div>
-                <label className="label">Estado</label>
-                <select className="input" value={estado} onChange={(e) => setEstado(e.target.value)}>
-                  {estados.map((e) => (
-                    <option key={e.sigla} value={e.sigla}>{e.sigla} — {e.nome}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label={<>Macrorregião <span className="text-gray-400 font-normal">(zoom)</span></>}
+                placeholder="Buscar mesorregião…"
+                items={macros.map((m) => ({ id: m.id, label: m.nome }))}
+                selected={selectedMacro ? { id: selectedMacro.id, label: selectedMacro.nome } : null}
+                onSelect={(item) => setSelectedMacro(macros.find((m) => m.id === item.id) ?? null)}
+                onClear={() => { setSelectedMacro(null); setSelectedMicro(null); setSelectedCidade(null); }}
+                disabled={macros.length === 0}
+              />
 
-              <div>
-                <label className="label">Macrorregião <span className="text-gray-400 font-normal">(zoom)</span></label>
-                <select
-                  className="input"
-                  value={selectedMacro?.id ?? ''}
-                  onChange={(e) => {
-                    const m = macros.find((x) => x.id === Number(e.target.value));
-                    setSelectedMacro(m ?? null);
-                  }}
-                  disabled={macros.length === 0}
-                >
-                  <option value="">Todas</option>
-                  {macros.map((m) => (
-                    <option key={m.id} value={m.id}>{m.nome}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label={<>Microrregião <span className="text-gray-400 font-normal">(zoom)</span></>}
+                placeholder="Selecione a macro primeiro…"
+                items={micros.map((m) => ({ id: m.id, label: m.nome }))}
+                selected={selectedMicro ? { id: selectedMicro.id, label: selectedMicro.nome } : null}
+                onSelect={(item) => setSelectedMicro(micros.find((m) => m.id === item.id) ?? null)}
+                onClear={() => { setSelectedMicro(null); setSelectedCidade(null); }}
+                disabled={!selectedMacro}
+              />
 
-              <div>
-                <label className="label">Microrregião <span className="text-gray-400 font-normal">(zoom)</span></label>
-                <select
-                  className="input"
-                  value={selectedMicro?.id ?? ''}
-                  onChange={(e) => {
-                    const m = micros.find((x) => x.id === Number(e.target.value));
-                    setSelectedMicro(m ?? null);
-                  }}
-                  disabled={micros.length === 0}
-                >
-                  <option value="">Todas</option>
-                  {micros.map((m) => (
-                    <option key={m.id} value={m.id}>{m.nome}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="label">Cidade <span className="text-gray-400 font-normal">(zoom)</span></label>
-                <select
-                  className="input"
-                  value={selectedCidade?.tse ?? ''}
-                  onChange={(e) => {
-                    const tse = Number(e.target.value);
-                    const c = cidadesDisponiveis.find((x) => x.tse === tse);
-                    setSelectedCidade(c ?? null);
-                  }}
-                  disabled={cidadesDisponiveis.length === 0}
-                >
-                  <option value="">Todas</option>
-                  {cidadesDisponiveis.map((c) => (
-                    <option key={c.tse} value={c.tse}>{c.nome}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchSelect
+                label={<>Cidade <span className="text-gray-400 font-normal">(zoom)</span></>}
+                placeholder="Buscar município…"
+                items={cidadesDisponiveis.map((c) => ({ id: c.tse, label: c.nome }))}
+                selected={selectedCidade ? { id: selectedCidade.tse, label: selectedCidade.nome } : null}
+                onSelect={(item) => setSelectedCidade({ nome: item.label, tse: item.id as number })}
+                onClear={() => setSelectedCidade(null)}
+                disabled={!mapData}
+              />
             </div>
           </section>
 
           {/* ── Dados eleitorais ── */}
           <section className="border-t border-gray-100 pt-3">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Dados eleitorais</p>
-
             <div className="space-y-2">
-              <div>
-                <label className="label">Ideologia</label>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {ideologias.map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => { setIdeologia(ideologia === id ? null : id); setPartido(null); }}
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium border transition-colors ${
-                        ideologia === id
-                          ? 'bg-primary-600 text-white border-primary-600'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-primary-400'
-                      }`}
-                    >
-                      {id}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
+              <SearchSelect
+                label="Ideologia"
+                placeholder="Buscar ideologia…"
+                items={ideologias.map((id) => ({ id, label: id }))}
+                selected={ideologia ? { id: ideologia, label: ideologia } : null}
+                onSelect={(item) => {
+                  setIdeologia(item.id as string);
+                  setPartido(null);
+                  setCandidatoSelecionado(null);
+                  setCandidatoQuery('');
+                  setSugestoes([]);
+                }}
+                onClear={() => setIdeologia(null)}
+              />
+
+              <SearchSelect
+                label="Partido"
+                placeholder="Buscar partido…"
+                items={partidosFiltrados.map((p) => ({ id: p.sigla, label: p.sigla, sublabel: p.nome }))}
+                selected={
+                  partido
+                    ? {
+                        id: partido,
+                        label: partido,
+                        sublabel: partidosFiltrados.find((p) => p.sigla === partido)?.nome,
+                      }
+                    : null
+                }
+                onSelect={(item) => {
+                  setPartido(item.id as string);
+                  setCandidatoSelecionado(null);
+                  setCandidatoQuery('');
+                  setSugestoes([]);
+                }}
+                onClear={() => {
+                  setPartido(null);
+                  setCandidatoSelecionado(null);
+                  setCandidatoQuery('');
+                  setSugestoes([]);
+                }}
+              />
+
+              {/* ── Busca de candidato ── */}
               <div>
-                <label className="label">Partido</label>
-                <select
-                  className="input"
-                  value={partido ?? ''}
-                  onChange={(e) => setPartido(e.target.value || null)}
-                >
-                  <option value="">Padrão do copiloto</option>
-                  {partidosFiltrados.map((p) => (
-                    <option key={p.sigla} value={p.sigla}>{p.sigla} — {p.nome}</option>
-                  ))}
-                </select>
+                <label className="label">
+                  Candidato
+                  {partidoAtivo
+                    ? <span className="text-gray-400 font-normal ml-1">({partidoAtivo})</span>
+                    : <span className="text-gray-400 font-normal ml-1">(todos os partidos)</span>
+                  }
+                </label>
+
+                {candidatoSelecionado ? (
+                  <div className="flex items-center gap-2 mt-1 px-2.5 py-1.5 bg-primary-50 border border-primary-200 rounded-lg">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-primary-800 truncate">{candidatoSelecionado.nome_urna}</p>
+                      <p className="text-[10px] text-primary-500">
+                        {[candidatoSelecionado.sigla_partido, candidatoSelecionado.numero ? `Nº ${candidatoSelecionado.numero}` : null].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setCandidatoSelecionado(null); setCandidatoQuery(''); setSugestoes([]); }}
+                      className="text-primary-400 hover:text-primary-700 flex-shrink-0"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        className="input pr-8"
+                        placeholder="Buscar por nome…"
+                        value={candidatoQuery}
+                        onChange={(e) => handleCandidatoInput(e.target.value)}
+                        onFocus={() => sugestoes.length > 0 && setDropdownAberto(true)}
+                        onBlur={() => setTimeout(() => setDropdownAberto(false), 150)}
+                      />
+                      {buscandoCandidato && (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <div className="w-3.5 h-3.5 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
+                    </div>
+
+                    {dropdownAberto && sugestoes.length > 0 && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {sugestoes.map((c) => (
+                          <button
+                            key={c.sequencial}
+                            type="button"
+                            onMouseDown={() => {
+                              setCandidatoSelecionado(c);
+                              setCandidatoQuery('');
+                              setSugestoes([]);
+                              setDropdownAberto(false);
+                            }}
+                            className="w-full text-left px-3 py-2 hover:bg-primary-50 transition-colors border-b border-gray-50 last:border-0"
+                          >
+                            <p className="text-xs font-medium text-gray-800">{c.nome_urna}</p>
+                            <p className="text-[10px] text-gray-400">
+                              {[c.sigla_partido, c.numero ? `Nº ${c.numero}` : null].filter(Boolean).join(' · ')}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {dropdownAberto && !buscandoCandidato && candidatoQuery.length >= 2 && sugestoes.length === 0 && (
+                      <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2">
+                        <p className="text-xs text-gray-400">Nenhum candidato encontrado</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -278,11 +448,7 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
 
         {/* Footer */}
         <div className="border-t border-gray-100 p-3 flex gap-3">
-          <button
-            type="button"
-            onClick={onReset}
-            className="flex-1 btn-secondary text-sm"
-          >
+          <button type="button" onClick={onReset} className="flex-1 btn-secondary text-sm">
             Resetar
           </button>
           <button

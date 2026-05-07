@@ -9,7 +9,11 @@ router.use(authenticate);
 router.get('/dados', MapaController.getDados);
 router.get('/filtro', MapaController.getFilteredDados);
 router.get('/camada', MapaController.getCamada);
+router.get('/ranking/partidos', MapaController.getRankingPartidos);
+router.get('/ranking/candidatos', MapaController.getRankingCandidatos);
+router.get('/ranking/votos-municipio', MapaController.getVotosPorMunicipio);
 router.get('/municipio/:tse/detalhes', MapaController.getMunicipioDetalhes);
+router.get('/municipio/:tse/partido/:sigla/candidatos', MapaController.getMunicipioCandidatosPorPartido);
 router.get('/zona/:id/detalhes', MapaController.getZonaDetalhes);
 router.get('/comparativo', MapaController.getComparativo);
 
