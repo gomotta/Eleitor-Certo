@@ -6,6 +6,7 @@ import type { MapData } from './index';
 interface Props {
   mapData: MapData | null;
   anosDisponiveis: number[];
+  selectedAno?: number;
   selectedCargo: string;
   cargosDisponiveis: string[];
   onYearChange: (ano: number) => void;
@@ -123,7 +124,7 @@ function CargoPicker({ cargo, cargos, onChange }: { cargo: string; cargos: strin
   );
 }
 
-export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, cargosDisponiveis, onYearChange, onCargoChange }: Props) {
+export default function MapSidebar({ mapData, anosDisponiveis, selectedAno, selectedCargo, cargosDisponiveis, onYearChange, onCargoChange }: Props) {
   const navigate = useNavigate();
 
   const stats = useMemo(() => {
@@ -134,12 +135,12 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, ca
     const totalGeral = features.reduce((s, f) => s + f.properties.votosTotal, 0);
     const sharePartido = totalGeral > 0 ? (totalPartido / totalGeral) * 100 : 0;
 
-    const top5 = [...features]
+    const top10 = [...features]
       .sort((a, b) => b.properties.votosPartido - a.properties.votosPartido)
-      .slice(0, 5)
+      .slice(0, 10)
       .map((f) => f.properties);
 
-    return { totalPartido, totalGeral, sharePartido, top5 };
+    return { totalPartido, totalGeral, sharePartido, top10 };
   }, [mapData]);
 
   const regiao = mapData?.metadata.microrregiao ?? mapData?.metadata.macrorregiao;
@@ -160,13 +161,13 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, ca
           </h2>
           {mapData && anosDisponiveis.length > 1 ? (
             <YearPicker
-              ano={mapData.metadata.ano}
+              ano={selectedAno ?? mapData.metadata.ano}
               anos={anosDisponiveis}
               onChange={onYearChange}
             />
           ) : (
             <span className="shrink-0 text-[10px] bg-primary-50 text-primary-600 font-semibold px-2 py-0.5 rounded-full border border-primary-100 mt-0.5">
-              {mapData?.metadata.ano ?? '—'}
+              {selectedAno ?? mapData?.metadata.ano ?? '—'}
             </span>
           )}
         </div>
@@ -202,54 +203,41 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, ca
           {/* Hero metric */}
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-2">
-              Share de votos válidos
+              Votos do partido
             </p>
-            <div className="flex items-end gap-1 mb-2">
-              <span className="text-5xl font-extrabold text-gray-900 tracking-tighter leading-none">
-                {stats.sharePartido.toFixed(1)}
+            <div className="flex items-end gap-2 mb-2">
+              <span className="text-4xl font-extrabold text-gray-900 tracking-tighter leading-none">
+                {stats.totalPartido.toLocaleString('pt-BR')}
               </span>
-              <span className="text-xl text-gray-400 font-medium mb-1">%</span>
+              <span className="text-base text-gray-400 font-normal mb-0.5">
+                ({stats.sharePartido.toFixed(1)}%)
+              </span>
             </div>
             <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-700"
                 style={{
-                  width: `${Math.min(stats.sharePartido * 2, 100)}%`,
+                  width: `${stats.totalGeral > 0 ? Math.min((stats.totalPartido / stats.totalGeral) * 100, 100) : 0}%`,
                   background: 'linear-gradient(90deg, #4ade80, #16a34a)',
                 }}
               />
             </div>
-            <p className="text-[10px] text-gray-400 mt-1">do partido no estado</p>
+            <p className="text-[10px] text-gray-400 mt-1">
+              de {stats.totalGeral.toLocaleString('pt-BR')} votos válidos no estado
+            </p>
           </div>
 
-          {/* Vote totals */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="bg-primary-50 border border-primary-100 rounded-xl px-3 py-2.5">
-              <p className="text-[10px] text-gray-500 truncate leading-tight">
-                {mapData.metadata.partido}
-              </p>
-              <p className="text-sm font-bold text-primary-700 mt-0.5 tracking-tight">
-                {stats.totalPartido.toLocaleString('pt-BR')}
-              </p>
-            </div>
-            <div className="bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5">
-              <p className="text-[10px] text-gray-500 leading-tight">Votos válidos</p>
-              <p className="text-sm font-bold text-gray-900 mt-0.5 tracking-tight">
-                {stats.totalGeral.toLocaleString('pt-BR')}
-              </p>
-            </div>
-          </div>
-
-          {/* Top 5 */}
+          {/* Top 10 */}
           <div className="flex-1 min-h-0 flex flex-col">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-3 shrink-0">
-              Top 5 Municípios
+              Top 10 Municípios
             </p>
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto flex-1 min-h-0 pr-1">
               {(() => {
-                const maxPct = Math.max(...stats.top5.map((m) => m.percentual), 0.001);
-                return stats.top5.map((m, i) => {
-                const pct = (m.percentual / maxPct) * 100;
+                const maxVotos = Math.max(...stats.top10.map((m) => m.votosPartido), 1);
+                return stats.top10.map((m, i) => {
+                const barPct = (m.votosPartido / maxVotos) * 100;
+                const sharePct = m.votosTotal > 0 ? (m.votosPartido / m.votosTotal) * 100 : 0;
                 return (
                   <div key={m.municipioTse}>
                     <div className="flex items-center gap-2 text-xs mb-1">
@@ -257,17 +245,15 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, ca
                         {i + 1}
                       </span>
                       <span className="flex-1 truncate text-gray-700 font-medium">{m.municipioNome}</span>
-                      <div className="text-right shrink-0">
-                        <span className="font-semibold text-gray-900">
-                          {m.votosPartido.toLocaleString('pt-BR')}
-                        </span>
-                        <span className="text-[10px] text-gray-400 ml-1">{m.percentual.toFixed(1)}%</span>
-                      </div>
+                      <span className="font-semibold text-gray-900 shrink-0">
+                        {m.votosPartido.toLocaleString('pt-BR')}
+                        <span className="text-[10px] text-gray-400 font-normal ml-0.5">({sharePct.toFixed(1)}%)</span>
+                      </span>
                     </div>
                     <div className="ml-6 h-1 bg-gray-100 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full bg-primary-400 transition-all duration-500"
-                        style={{ width: `${pct}%` }}
+                        style={{ width: `${barPct}%` }}
                       />
                     </div>
                   </div>
@@ -287,19 +273,26 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedCargo, ca
       )}
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-gray-100 shrink-0">
+      <div className="px-4 py-1.5 border-t border-gray-100 shrink-0 flex items-center justify-center gap-3">
+        <button
+          onClick={() => navigate('/cabos-eleitorais')}
+          className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-primary-600 py-1 px-2 rounded-lg hover:bg-primary-50 transition-colors font-medium"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Cabos Eleitorais
+        </button>
+        <span className="text-gray-200">|</span>
         <button
           onClick={() => navigate('/copiloto')}
-          className="w-full flex items-center justify-center gap-1.5 text-xs text-gray-400 hover:text-primary-600 py-1.5 rounded-lg hover:bg-primary-50 transition-colors"
+          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-primary-600 py-1 px-2 rounded-lg hover:bg-primary-50 transition-colors"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 17l-5-5m0 0l5-5m-5 5h12" />
           </svg>
           Editar Copiloto
         </button>
-        <p className="text-[10px] text-gray-300 text-center mt-1">
-          Passe o mouse nos círculos para detalhes
-        </p>
       </div>
     </aside>
   );

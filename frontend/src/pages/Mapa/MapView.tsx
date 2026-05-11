@@ -798,9 +798,12 @@ function MapLayersWithNivelState({
   );
 }
 
-export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, colorMode = 'partido', onGeoFocusChange }: Props) {
+export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, hideAttribution, colorMode = 'partido', onGeoFocusChange }: Props & { hideAttribution?: boolean }) {
   return (
     <MapContainer center={[-18.5, -44.0]} zoom={6} className="h-full w-full" zoomControl>
+      {hideAttribution && (
+        <style>{'.leaflet-control-attribution{display:none!important}'}</style>
+      )}
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'

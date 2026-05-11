@@ -9,6 +9,8 @@ import candidateRoutes from './routes/candidate.routes';
 import geoRoutes from './routes/geo.routes';
 import mapaRoutes from './routes/mapa.routes';
 import partidosRoutes from './routes/partidos.routes';
+import aiRoutes from './routes/ai.routes';
+import caboEleitoralRoutes from './routes/cabo-eleitoral.routes';
 
 const app = express();
 
@@ -23,6 +25,9 @@ app.use('/api/candidates', candidateRoutes);
 app.use('/api/geo', geoRoutes);
 app.use('/api/mapa', mapaRoutes);
 app.use('/api/partidos', partidosRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/cabos-eleitorais', caboEleitoralRoutes);
+
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });

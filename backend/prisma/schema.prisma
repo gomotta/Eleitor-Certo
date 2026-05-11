@@ -131,15 +131,50 @@ model resultados_candidato_secao {
 }
 
 model usuarios {
-  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  nome          String    @db.VarChar(150)
-  email         String    @unique @db.VarChar(255)
-  senha_hash    String
-  perfil        String    @default("usuario") @db.VarChar(50)
-  ativo         Boolean   @default(true)
-  criado_em     DateTime  @default(now()) @db.Timestamptz(6)
-  atualizado_em DateTime  @default(now()) @db.Timestamptz(6)
-  copiloto      copiloto?
+  id               String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nome             String             @db.VarChar(150)
+  email            String             @unique @db.VarChar(255)
+  senha_hash       String
+  perfil           String             @default("usuario") @db.VarChar(50)
+  ativo            Boolean            @default(true)
+  criado_em        DateTime           @default(now()) @db.Timestamptz(6)
+  atualizado_em    DateTime           @default(now()) @db.Timestamptz(6)
+  copiloto         copiloto?
+  cabos_eleitorais cabos_eleitorais[]
 
   @@index([email], map: "idx_usuarios_email")
+}
+
+model cabos_eleitorais {
+  id            String                     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  usuario_id    String                     @db.Uuid
+  nome          String                     @db.VarChar(150)
+  telefone      String?                    @db.VarChar(20)
+  email         String?                    @db.VarChar(255)
+  cidade_nome   String?                    @db.VarChar(100)
+  estado        String?                    @db.Char(2)
+  criado_em     DateTime                   @default(now()) @db.Timestamptz(6)
+  atualizado_em DateTime                   @default(now()) @db.Timestamptz(6)
+  usuario       usuarios                   @relation(fields: [usuario_id], references: [id], onDelete: Cascade)
+  historicos    cabo_eleitoral_historico[]
+
+  @@index([usuario_id], map: "idx_cabos_usuario")
+}
+
+model cabo_eleitoral_historico {
+  id                   String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  cabo_eleitoral_id    String           @db.Uuid
+  ano_eleicao          Int
+  sequencial_candidato String           @db.VarChar(20)
+  candidato_nome       String           @db.VarChar(100)
+  cargo                String?          @db.VarChar(30)
+  id_municipio_tse     Int
+  municipio_nome       String?          @db.VarChar(100)
+  secoes               Json
+  votos_calculados     Int              @default(0)
+  criado_em            DateTime         @default(now()) @db.Timestamptz(6)
+  atualizado_em        DateTime         @default(now()) @db.Timestamptz(6)
+  cabo_eleitoral       cabos_eleitorais @relation(fields: [cabo_eleitoral_id], references: [id], onDelete: Cascade)
+
+  @@index([cabo_eleitoral_id], map: "idx_historico_cabo")
 }

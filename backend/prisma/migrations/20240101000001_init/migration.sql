@@ -1,0 +1,1 @@
+-- Initial migration placeholder (tables created via direct SQL)

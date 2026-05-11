@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from '@/pages/Login';
 import CopilotoPage from '@/pages/Copiloto';
 import MapaPage from '@/pages/Mapa';
+import CabosEleitoraisPage from '@/pages/CabosEleitorais';
 import { useAuthStore } from '@/stores/authStore';
 import { useCandidateStore } from '@/stores/candidateStore';
 
@@ -37,6 +38,16 @@ export default function App() {
             <RequireAuth>
               <RequireCopiloto>
                 <MapaPage />
+              </RequireCopiloto>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/cabos-eleitorais"
+          element={
+            <RequireAuth>
+              <RequireCopiloto>
+                <CabosEleitoraisPage />
               </RequireCopiloto>
             </RequireAuth>
           }

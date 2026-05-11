@@ -23,17 +23,30 @@ function memSet(key: string, data: unknown, ttlSeconds: number) {
 // Cache: UF → { nomesMap, microMap }. Promise cached so concurrent calls share the same fetch.
 const nomesPromiseCache = new Map<string, Promise<{ nomesMap: Map<number, string>; microMap: Map<number, number> }>>();
 
-async function fetchNomesMap(uf: string): Promise<{ nomesMap: Map<number, string>; microMap: Map<number, number> }> {
+export async function fetchNomesMap(uf: string): Promise<{ nomesMap: Map<number, string>; microMap: Map<number, number> }> {
   if (nomesPromiseCache.has(uf)) return nomesPromiseCache.get(uf)!;
 
+  // TSE → IBGE id pode estar ausente em uma tabela mas presente em outra; juntamos
+  // todas as fontes para maximizar a cobertura de nomes (evitando que a UI mostre
+  // o id do município no lugar do nome).
   const promise = Promise.all([
     fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`),
     prisma.$queryRaw<Array<{ id_municipio_tse: number; id_municipio: number }>>`
       SELECT DISTINCT id_municipio_tse, id_municipio
       FROM perfis_locais_votacao
-      WHERE sigla_uf = ${uf} AND id_municipio IS NOT NULL
+      WHERE sigla_uf = ${uf} AND id_municipio IS NOT NULL AND id_municipio_tse IS NOT NULL
     `,
-  ]).then(async ([ibgeResp, ibgeCodesRaw]) => {
+    prisma.$queryRaw<Array<{ id_municipio_tse: number; id_municipio: number }>>`
+      SELECT DISTINCT id_municipio_tse, id_municipio
+      FROM candidatos
+      WHERE sigla_uf = ${uf} AND id_municipio IS NOT NULL AND id_municipio_tse IS NOT NULL
+    `.catch(() => [] as Array<{ id_municipio_tse: number; id_municipio: number }>),
+    prisma.$queryRaw<Array<{ id_municipio_tse: number; id_municipio: number }>>`
+      SELECT DISTINCT id_municipio_tse, id_municipio
+      FROM resultados_candidato_secao
+      WHERE sigla_uf = ${uf} AND id_municipio IS NOT NULL AND id_municipio_tse IS NOT NULL
+    `.catch(() => [] as Array<{ id_municipio_tse: number; id_municipio: number }>),
+  ]).then(async ([ibgeResp, perfisRows, candidatosRows, resultadosRows]) => {
     const nomesMap = new Map<number, string>();
     const microMap = new Map<number, number>();
     if (ibgeResp.ok) {
@@ -44,12 +57,21 @@ async function fetchNomesMap(uf: string): Promise<{ nomesMap: Map<number, string
       }>;
       const ibgeNomeMap = new Map(ibgeMunicipios.map((m) => [m.id, m.nome]));
       const ibgeMicroMap = new Map(ibgeMunicipios.map((m) => [m.id, m.microrregiao.id]));
-      ibgeCodesRaw.forEach((r) => {
-        const nome = ibgeNomeMap.get(r.id_municipio);
-        if (nome) nomesMap.set(r.id_municipio_tse, nome);
-        const microId = ibgeMicroMap.get(r.id_municipio);
-        if (microId) microMap.set(r.id_municipio_tse, microId);
-      });
+      const apply = (rows: Array<{ id_municipio_tse: number; id_municipio: number }>) => {
+        for (const r of rows) {
+          if (!nomesMap.has(r.id_municipio_tse)) {
+            const nome = ibgeNomeMap.get(r.id_municipio);
+            if (nome) nomesMap.set(r.id_municipio_tse, nome);
+          }
+          if (!microMap.has(r.id_municipio_tse)) {
+            const microId = ibgeMicroMap.get(r.id_municipio);
+            if (microId) microMap.set(r.id_municipio_tse, microId);
+          }
+        }
+      };
+      apply(perfisRows);
+      apply(candidatosRows);
+      apply(resultadosRows);
     }
     return { nomesMap, microMap };
   }).catch(() => ({ nomesMap: new Map<number, string>(), microMap: new Map<number, number>() }));
@@ -102,7 +124,7 @@ async function queryVotos(
     WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
     GROUP BY id_municipio_tse
   `.catch(() => [] as VotosMunicipioRow[]));
-  if (mvRows.length > 0) return mvRows;
+  if (mvRows.some((r) => r.votos_partido > 0)) return mvRows;
 
   return prisma.$queryRaw<VotosMunicipioRow[]>`
     SELECT
@@ -137,7 +159,7 @@ async function queryVotosPorIdeologia(
     WHERE sigla_uf = ${uf} AND cargo = ${cargoDb} AND ano = ${ano}
     GROUP BY id_municipio_tse
   `.catch(() => [] as VotosMunicipioRow[]));
-  if (mvRows.length > 0) return mvRows;
+  if (mvRows.some((r) => r.votos_partido > 0)) return mvRows;
 
   return prisma.$queryRaw<VotosMunicipioRow[]>`
     SELECT id_municipio_tse,
@@ -186,7 +208,7 @@ async function queryVotosTodosCargos(
     WHERE sigla_uf = ${uf} AND ano = ${ano}
     GROUP BY id_municipio_tse
   `.catch(() => [] as VotosMunicipioRow[]));
-  if (mvRows.length > 0) return mvRows;
+  if (mvRows.some((r) => r.votos_partido > 0)) return mvRows;
 
   return prisma.$queryRaw<VotosMunicipioRow[]>`
     SELECT
@@ -230,7 +252,7 @@ export const MapaService = {
     const uf = copiloto.estado.toUpperCase();
 
     const cargoFiltro = cargoOverride && cargoOverride !== 'todos' ? cargoOverride : null;
-    const cacheKey = `mapa:v4:${candidatoId}:${ano}:${cargoFiltro ?? 'todos'}`;
+    const cacheKey = `mapa:v5:${candidatoId}:${ano}:${cargoFiltro ?? 'todos'}`;
 
     // 1. Tenta memória
     const memHit = memGet<object>(cacheKey);
@@ -281,7 +303,7 @@ export const MapaService = {
           properties: {
             municipioTse: r.id_municipio_tse,
             municipioIbge: c.id_municipio ?? null,
-            municipioNome: nomesMap.get(r.id_municipio_tse) ?? String(r.id_municipio_tse),
+            municipioNome: nomesMap.get(r.id_municipio_tse) ?? 'Município sem identificação',
             microRegiaoId: microMap.get(r.id_municipio_tse) ?? null,
             uf,
             votosPartido: r.votos_partido,
@@ -318,7 +340,7 @@ export const MapaService = {
 
   async getFilteredDados(
     candidatoId: string,
-    opts: { estado?: string; partido?: string; ideologia?: string; candidatoSequencial?: string; candidatoNomeUrna?: string; cargo?: string },
+    opts: { estado?: string; partido?: string; ideologia?: string; candidatoSequencial?: string; candidatoNomeUrna?: string; cargo?: string; ano?: number },
   ) {
     const uf = (opts.estado?.toUpperCase() || undefined);
     const partidoOverride = opts.partido?.toUpperCase() || undefined;
@@ -336,11 +358,11 @@ export const MapaService = {
     }
 
     const cargoDb = CARGO_MAP[copiloto.cargo] ?? copiloto.cargo.replace(/_/g, ' ');
-    const ano = ANO_POR_CARGO[cargoDb] ?? 2022;
+    const ano = opts.ano ?? ANO_POR_CARGO[cargoDb] ?? 2022;
     const resolvedUf = uf ?? copiloto.estado.toUpperCase();
     const siglaPartido = partidoOverride ?? extrairSiglaPartido(copiloto.partido);
 
-    const cacheKey = `mapa:filtro:${resolvedUf}:${siglaPartido}:${ideologia ?? ''}:${candidatoSequencial ?? ''}:${cargoFiltro ?? 'todos'}`;
+    const cacheKey = `mapa:filtro:v2:${resolvedUf}:${ano}:${siglaPartido}:${ideologia ?? ''}:${candidatoSequencial ?? ''}:${cargoFiltro ?? 'todos'}`;
     const memHit = memGet<object>(cacheKey);
     if (memHit) return memHit;
     const redisHit = await redis.get(cacheKey).catch(() => null);
@@ -394,7 +416,7 @@ export const MapaService = {
         properties: {
           municipioTse: r.id_municipio_tse,
           municipioIbge: c.id_municipio ?? null,
-          municipioNome: nomesMap.get(r.id_municipio_tse) ?? String(r.id_municipio_tse),
+          municipioNome: nomesMap.get(r.id_municipio_tse) ?? 'Município sem identificação',
           microRegiaoId: microMap.get(r.id_municipio_tse) ?? null,
           uf: resolvedUf,
           votosPartido: r.votos_partido,
@@ -435,13 +457,37 @@ export const MapaService = {
     uf: string,
     cargoKey: string,
     ano: number,
+    nomeLocal?: string,
   ) {
     const isTodos = cargoKey === 'todos';
     const cargoDb = isTodos ? '' : (CARGO_MAP[cargoKey] ?? cargoKey.replace(/_/g, ' '));
-    const cargoFilter = isTodos
-      ? Prisma.sql`1=1`
-      : Prisma.sql`cargo = ${cargoDb}`;
 
+    // Quando local é especificado, precisa do JOIN com perfis (mv não tem zona/secao)
+    if (nomeLocal) {
+      const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`r.cargo = ${cargoDb}`;
+      return prisma.$queryRaw<Array<{ sigla_partido: string; votos: number }>>`
+        SELECT regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+               SUM(r.votos)::int AS votos
+        FROM resultados_candidato_secao r
+        JOIN perfis_locais_votacao p
+          ON p.id_municipio_tse = r.id_municipio_tse
+          AND p.zona = r.zona
+          AND p.secao = r.secao
+          AND p.ano = r.ano
+          AND p.turno = 1
+        WHERE r.id_municipio_tse = ${municipioTse}
+          AND r.sigla_uf = ${uf}
+          AND ${cargoFilter}
+          AND r.ano = ${ano}
+          AND (r.turno = 1 OR r.turno IS NULL)
+          AND p.nome = ${nomeLocal}
+        GROUP BY regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g')
+        ORDER BY votos DESC
+        LIMIT 10
+      `;
+    }
+
+    const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`cargo = ${cargoDb}`;
     const query = prisma.$queryRaw<Array<{ sigla_partido: string; votos: number }>>`
       SELECT regexp_replace(sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido, SUM(votos)::int AS votos
       FROM mv_votos_municipio
@@ -475,15 +521,17 @@ export const MapaService = {
     ano: number,
     siglaPartido: string,
   ) {
-    if (cargoKey === 'todos') {
-      throw new AppError('Listagem de candidatos requer cargo específico (não "todos").', 400);
-    }
-    const cargoDb = CARGO_MAP[cargoKey] ?? cargoKey.replace(/_/g, ' ');
-    // resultados_candidato_secao é @@ignore no prisma, então usamos raw SQL + join com candidatos
-    return prisma.$queryRaw<Array<{ numero: number | null; nome_urna: string | null; votos: number }>>`
+    const isTodos = cargoKey === 'todos';
+    const cargoDb = isTodos ? '' : (CARGO_MAP[cargoKey] ?? cargoKey.replace(/_/g, ' '));
+    const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`r.cargo = ${cargoDb}`;
+    const cargoFilterC = isTodos ? Prisma.sql`1=1` : Prisma.sql`c.cargo = ${cargoDb}`;
+    return prisma.$queryRaw<Array<{ sequencial: bigint; numero: number | null; nome_urna: string | null; sigla_partido: string; cargo: string; votos: number }>>`
       SELECT
+        c.sequencial,
         c.numero::int AS numero,
-        c.nome_urna AS nome_urna,
+        c.nome_urna,
+        regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+        r.cargo,
         SUM(r.votos)::int AS votos
       FROM resultados_candidato_secao r
       JOIN candidatos c
@@ -493,16 +541,103 @@ export const MapaService = {
         AND c.cargo = r.cargo
       WHERE r.id_municipio_tse = ${municipioTse}
         AND r.sigla_uf = ${uf}
-        AND r.cargo = ${cargoDb}
+        AND ${cargoFilter}
         AND r.ano = ${ano}
-        AND c.cargo = ${cargoDb}
+        AND ${cargoFilterC}
         AND c.ano = ${ano}
         AND c.sigla_uf = ${uf}
         AND regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') = ${siglaPartido}
         AND (r.turno = 1 OR r.turno IS NULL)
-      GROUP BY c.sequencial, c.numero, c.nome_urna
+      GROUP BY c.sequencial, c.numero, c.nome_urna,
+               regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g'), r.cargo
       ORDER BY votos DESC
       LIMIT 15
+    `;
+  },
+
+  // Candidatos em um município — qualquer cargo, partido e local opcionais
+  async getMunicipioCandidatos(
+    municipioTse: number,
+    uf: string,
+    cargoKey: string,
+    ano: number,
+    partido?: string,
+    nomeLocal?: string,
+  ) {
+    const isTodos = cargoKey === 'todos';
+    const cargoDb = isTodos ? '' : (CARGO_MAP[cargoKey] ?? cargoKey.replace(/_/g, ' '));
+    const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`r.cargo = ${cargoDb}`;
+    const cargoFilterC = isTodos ? Prisma.sql`1=1` : Prisma.sql`c.cargo = ${cargoDb}`;
+    const partidoFilter = partido
+      ? Prisma.sql`AND regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') = ${partido}`
+      : Prisma.sql``;
+    const localJoin = nomeLocal
+      ? Prisma.sql`JOIN perfis_locais_votacao p ON p.id_municipio_tse = r.id_municipio_tse AND p.zona = r.zona AND p.secao = r.secao AND p.ano = r.ano AND p.turno = 1`
+      : Prisma.sql``;
+    const localFilter = nomeLocal ? Prisma.sql`AND p.nome = ${nomeLocal}` : Prisma.sql``;
+    return prisma.$queryRaw<Array<{ sequencial: bigint; numero: number | null; nome_urna: string | null; sigla_partido: string; cargo: string; votos: number }>>`
+      SELECT
+        c.sequencial,
+        c.numero::int AS numero,
+        c.nome_urna,
+        regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+        r.cargo,
+        SUM(r.votos)::int AS votos
+      FROM resultados_candidato_secao r
+      ${localJoin}
+      JOIN candidatos c
+        ON c.sequencial = r.sequencial_candidato
+        AND c.ano = r.ano
+        AND c.sigla_uf = r.sigla_uf
+        AND c.cargo = r.cargo
+      WHERE r.id_municipio_tse = ${municipioTse}
+        AND r.sigla_uf = ${uf}
+        AND ${cargoFilter}
+        AND r.ano = ${ano}
+        AND ${cargoFilterC}
+        AND c.ano = ${ano}
+        AND c.sigla_uf = ${uf}
+        AND (r.turno = 1 OR r.turno IS NULL)
+        ${partidoFilter}
+        ${localFilter}
+      GROUP BY c.sequencial, c.numero, c.nome_urna,
+               regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g'), r.cargo
+      ORDER BY votos DESC
+      LIMIT 30
+    `;
+  },
+
+  // Busca candidato por nome (para a IA responder votos de um candidato)
+  async buscarVotosCandidato(nome: string, uf: string, ano: number, cargoDb?: string, municipioTse?: number) {
+    const cargoFilter = cargoDb
+      ? Prisma.sql`AND c.cargo = ${cargoDb} AND r.cargo = ${cargoDb}`
+      : Prisma.sql``;
+    const muniFilter = municipioTse != null
+      ? Prisma.sql`AND r.id_municipio_tse = ${municipioTse}`
+      : Prisma.sql``;
+    return prisma.$queryRaw<Array<{ nome_urna: string; cargo: string; sigla_partido: string; situacao: string | null; total_votos: number }>>`
+      SELECT
+        c.nome_urna,
+        r.cargo,
+        regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+        c.situacao,
+        SUM(r.votos)::int AS total_votos
+      FROM resultados_candidato_secao r
+      JOIN candidatos c
+        ON r.sequencial_candidato = c.sequencial
+        AND r.ano = c.ano
+        AND c.cargo = r.cargo
+      WHERE r.sigla_uf = ${uf}
+        AND r.ano = ${ano}
+        AND c.ano = ${ano}
+        AND (r.turno = 1 OR r.turno IS NULL)
+        AND unaccent(c.nome_urna) ILIKE unaccent(${'%' + nome + '%'})
+        ${cargoFilter}
+        ${muniFilter}
+      GROUP BY c.sequencial, c.nome_urna, r.cargo,
+               regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g'), c.situacao
+      ORDER BY total_votos DESC
+      LIMIT 10
     `;
   },
 
@@ -585,14 +720,15 @@ export const MapaService = {
       // próprio campeão, e o ranking não é dominado pelas maiores cidades.
       return prisma.$queryRaw<Array<{
         sequencial: bigint; numero: number | null; nome_urna: string | null;
-        sigla_partido: string; votos: number;
+        sigla_partido: string; cargo: string; votos: number;
       }>>`
-        SELECT sequencial, numero, nome_urna, sigla_partido, votos FROM (
+        SELECT sequencial, numero, nome_urna, sigla_partido, cargo, votos FROM (
           SELECT
             c.sequencial,
             c.numero::int AS numero,
             c.nome_urna AS nome_urna,
             regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+            r.cargo,
             SUM(r.votos)::int AS votos,
             ROW_NUMBER() OVER (
               PARTITION BY c.id_municipio_tse
@@ -615,7 +751,7 @@ export const MapaService = {
             ${partidoFilter}
             ${municipiosFilter}
           GROUP BY c.sequencial, c.numero, c.nome_urna, c.id_municipio_tse,
-                   regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g')
+                   regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g'), r.cargo
         ) t
         WHERE rn = 1
         ORDER BY votos DESC
@@ -625,13 +761,14 @@ export const MapaService = {
 
     return prisma.$queryRaw<Array<{
       sequencial: bigint; numero: number | null; nome_urna: string | null;
-      sigla_partido: string; votos: number;
+      sigla_partido: string; cargo: string; votos: number;
     }>>`
       SELECT
         c.sequencial,
         c.numero::int AS numero,
         c.nome_urna AS nome_urna,
         regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') AS sigla_partido,
+        r.cargo,
         SUM(r.votos)::int AS votos
       FROM resultados_candidato_secao r
       JOIN candidatos c
@@ -650,9 +787,133 @@ export const MapaService = {
         ${municipioFilter}
         ${municipiosFilter}
       GROUP BY c.sequencial, c.numero, c.nome_urna,
-               regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g')
+               regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g'), r.cargo
       ORDER BY votos DESC
       LIMIT 50
+    `;
+  },
+
+  // ── Ranking: cargos no estado (totais por cargo) ────────────────────────────
+  async getRankingCargos(uf: string, ano: number, municipios?: number[]) {
+    const muniFilter = municipios && municipios.length > 0
+      ? Prisma.sql`AND id_municipio_tse IN (${Prisma.join(municipios)})`
+      : Prisma.sql``;
+
+    const mvRows = await (prisma.$queryRaw<Array<{ cargo: string; votos: number }>>`
+      SELECT cargo, SUM(votos)::int AS votos
+      FROM mv_votos_municipio
+      WHERE sigla_uf = ${uf} AND ano = ${ano}
+        ${muniFilter}
+      GROUP BY cargo
+      ORDER BY votos DESC
+    `.catch(() => [] as Array<{ cargo: string; votos: number }>));
+    if (mvRows.length > 0) return mvRows;
+
+    const muniFilterR = municipios && municipios.length > 0
+      ? Prisma.sql`AND id_municipio_tse IN (${Prisma.join(municipios)})`
+      : Prisma.sql``;
+    return prisma.$queryRaw<Array<{ cargo: string; votos: number }>>`
+      SELECT cargo, SUM(votos)::int AS votos
+      FROM resultados_candidato_secao
+      WHERE sigla_uf = ${uf} AND ano = ${ano}
+        AND (turno = 1 OR turno IS NULL)
+        ${muniFilterR}
+      GROUP BY cargo
+      ORDER BY votos DESC
+    `;
+  },
+
+  // ── Ranking: cargos dentro de um local de votação ───────────────────────────
+  async getRankingCargosLocal(
+    uf: string,
+    municipioTse: number,
+    ano: number,
+    nomeLocal: string,
+    opts: { partido?: string; sequencial?: string } = {},
+  ) {
+    const partidoFilter = opts.partido
+      ? Prisma.sql`AND regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') = ${opts.partido}`
+      : Prisma.sql``;
+    const seqFilter = opts.sequencial
+      ? Prisma.sql`AND r.sequencial_candidato = ${BigInt(opts.sequencial)}`
+      : Prisma.sql``;
+    return prisma.$queryRaw<Array<{ cargo: string; votos: number }>>`
+      SELECT r.cargo, SUM(r.votos)::int AS votos
+      FROM resultados_candidato_secao r
+      JOIN perfis_locais_votacao p
+        ON p.id_municipio_tse = r.id_municipio_tse
+        AND p.zona = r.zona
+        AND p.secao = r.secao
+        AND p.ano = r.ano
+        AND p.turno = 1
+      WHERE r.id_municipio_tse = ${municipioTse}
+        AND r.sigla_uf = ${uf}
+        AND r.ano = ${ano}
+        AND (r.turno = 1 OR r.turno IS NULL)
+        AND p.nome = ${nomeLocal}
+        ${partidoFilter}
+        ${seqFilter}
+      GROUP BY r.cargo
+      ORDER BY votos DESC
+    `;
+  },
+
+  // ── Ranking: locais de votação (prédios) em um município ────────────────────
+  // Agrega votos de resultados_candidato_secao pelo nome do local em perfis_locais_votacao
+  async getRankingLocais(
+    uf: string,
+    municipioTse: number,
+    cargoKey: string,
+    ano: number,
+    opts: { partido?: string; sequencial?: string } = {},
+  ) {
+    const isTodos = cargoKey === 'todos';
+    const cargoDb = isTodos ? '' : (CARGO_MAP[cargoKey] ?? cargoKey.replace(/_/g, ' '));
+    const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`r.cargo = ${cargoDb}`;
+    const partidoFilter = opts.partido
+      ? Prisma.sql`AND regexp_replace(r.sigla_partido, '[\x80-\x9f]', '', 'g') = ${opts.partido}`
+      : Prisma.sql``;
+
+    if (opts.sequencial) {
+      return prisma.$queryRaw<Array<{ nome_local: string; votos: number }>>`
+        SELECT p.nome AS nome_local, SUM(r.votos)::int AS votos
+        FROM resultados_candidato_secao r
+        JOIN perfis_locais_votacao p
+          ON p.id_municipio_tse = r.id_municipio_tse
+          AND p.zona = r.zona
+          AND p.secao = r.secao
+          AND p.ano = r.ano
+          AND p.turno = 1
+        WHERE r.id_municipio_tse = ${municipioTse}
+          AND r.sigla_uf = ${uf}
+          AND ${cargoFilter}
+          AND r.ano = ${ano}
+          AND r.sequencial_candidato = ${BigInt(opts.sequencial)}
+          AND (r.turno = 1 OR r.turno IS NULL)
+        GROUP BY p.nome
+        ORDER BY votos DESC
+        LIMIT 100
+      `;
+    }
+
+    return prisma.$queryRaw<Array<{ nome_local: string; votos: number }>>`
+      SELECT p.nome AS nome_local, SUM(r.votos)::int AS votos
+      FROM resultados_candidato_secao r
+      JOIN perfis_locais_votacao p
+        ON p.id_municipio_tse = r.id_municipio_tse
+        AND p.zona = r.zona
+        AND p.secao = r.secao
+        AND p.ano = r.ano
+        AND p.turno = 1
+      WHERE r.id_municipio_tse = ${municipioTse}
+        AND r.sigla_uf = ${uf}
+        AND ${cargoFilter}
+        AND r.ano = ${ano}
+        AND (r.turno = 1 OR r.turno IS NULL)
+        ${partidoFilter}
+      GROUP BY p.nome
+      ORDER BY votos DESC
+      LIMIT 100
     `;
   },
 
@@ -680,14 +941,18 @@ export const MapaService = {
       `;
     }
 
-    // Votos de um partido por município
-    const partido = opts.partido ?? '';
+    // Votos por município — opcionalmente filtrado por partido. Sem partido nem
+    // sequencial, retorna o total do cargo por município (usado quando o
+    // contexto da análise tem cargo específico mas ainda nenhum partido).
     const cargoFilter = isTodos ? Prisma.sql`1=1` : Prisma.sql`cargo = ${cargoDb}`;
+    const partidoFilter = opts.partido
+      ? Prisma.sql`AND regexp_replace(sigla_partido, '[\x80-\x9f]', '', 'g') = ${opts.partido}`
+      : Prisma.sql``;
     const mvRows = await (prisma.$queryRaw<Array<{ id_municipio_tse: number; votos: number }>>`
       SELECT id_municipio_tse, SUM(votos)::int AS votos
       FROM mv_votos_municipio
       WHERE sigla_uf = ${uf} AND ${cargoFilter} AND ano = ${ano}
-        AND regexp_replace(sigla_partido, '[\x80-\x9f]', '', 'g') = ${partido}
+        ${partidoFilter}
       GROUP BY id_municipio_tse
       ORDER BY votos DESC
     `.catch(() => [] as Array<{ id_municipio_tse: number; votos: number }>));
@@ -698,7 +963,7 @@ export const MapaService = {
       SELECT id_municipio_tse, SUM(votos)::int AS votos
       FROM resultados_candidato_secao
       WHERE sigla_uf = ${uf} AND ${cargoFilterR} AND ano = ${ano}
-        AND regexp_replace(sigla_partido, '[\x80-\x9f]', '', 'g') = ${partido}
+        ${partidoFilter}
         AND (turno = 1 OR turno IS NULL)
       GROUP BY id_municipio_tse
       ORDER BY votos DESC

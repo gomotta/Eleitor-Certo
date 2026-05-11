@@ -21,7 +21,7 @@ export const MapaController = {
 
   async getFilteredDados(req: Request, res: Response, next: NextFunction) {
     try {
-      const { candidato_id, estado, partido, ideologia, candidato_sequencial, candidato_nome_urna, cargo } = req.query;
+      const { candidato_id, estado, partido, ideologia, candidato_sequencial, candidato_nome_urna, cargo, ano } = req.query;
       if (!candidato_id || typeof candidato_id !== 'string') {
         res.status(400).json({ error: 'Parâmetro candidato_id obrigatório' });
         return;
@@ -33,6 +33,7 @@ export const MapaController = {
         candidatoSequencial: candidato_sequencial as string | undefined,
         candidatoNomeUrna: candidato_nome_urna as string | undefined,
         cargo: cargo as string | undefined,
+        ano: ano ? Number(ano) : undefined,
       });
       res.json(dados);
     } catch (err) {
@@ -43,7 +44,7 @@ export const MapaController = {
   async getMunicipioDetalhes(req: Request, res: Response, next: NextFunction) {
     try {
       const tse = Number(req.params.tse);
-      const { uf, cargo, ano } = req.query;
+      const { uf, cargo, ano, nome_local } = req.query;
       if (isNaN(tse) || !uf || !cargo || !ano) {
         res.status(400).json({ error: 'Parâmetros obrigatórios: tse, uf, cargo, ano' });
         return;
@@ -53,6 +54,7 @@ export const MapaController = {
         String(uf),
         String(cargo),
         Number(ano),
+        nome_local ? String(nome_local) : undefined,
       );
       res.json(detalhes);
     } catch (err) {
@@ -70,13 +72,34 @@ export const MapaController = {
         return;
       }
       const detalhes = await MapaService.getMunicipioCandidatosPorPartido(
-        tse,
-        String(uf),
-        String(cargo),
-        Number(ano),
-        sigla,
+        tse, String(uf), String(cargo), Number(ano), sigla,
       );
-      res.json(detalhes);
+      const serializable = (detalhes as any[]).map((r) => ({
+        ...r, sequencial: r.sequencial != null ? String(r.sequencial) : null,
+      }));
+      res.json(serializable);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getMunicipioCandidatos(req: Request, res: Response, next: NextFunction) {
+    try {
+      const tse = Number(req.params.tse);
+      const { uf, cargo, ano, partido, nome_local } = req.query;
+      if (isNaN(tse) || !uf || !cargo || !ano) {
+        res.status(400).json({ error: 'Parâmetros obrigatórios: tse, uf, cargo, ano' });
+        return;
+      }
+      const data = await MapaService.getMunicipioCandidatos(
+        tse, String(uf), String(cargo), Number(ano),
+        partido ? String(partido).toUpperCase() : undefined,
+        nome_local ? String(nome_local) : undefined,
+      );
+      const serializable = (data as any[]).map((r) => ({
+        ...r, sequencial: r.sequencial != null ? String(r.sequencial) : null,
+      }));
+      res.json(serializable);
     } catch (err) {
       next(err);
     }
@@ -104,20 +127,6 @@ export const MapaController = {
       } else {
         res.status(400).json({ error: 'nivel deve ser macro, micro ou zona' });
       }
-    } catch (err) {
-      next(err);
-    }
-  },
-
-  async getZonaDetalhes(req: Request, res: Response, next: NextFunction) {
-    try {
-      const zonaId = Number(req.params.id);
-      if (isNaN(zonaId)) {
-        res.status(400).json({ error: 'ID de zona inválido' });
-        return;
-      }
-      // Legacy stub
-      res.json([]);
     } catch (err) {
       next(err);
     }
@@ -183,6 +192,72 @@ export const MapaController = {
         sequencial: r.sequencial != null ? String(r.sequencial) : null,
       }));
       res.json(serializable);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getRankingCargos(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { uf, ano, municipios } = req.query;
+      if (!uf || !ano) {
+        res.status(400).json({ error: 'Parâmetros obrigatórios: uf, ano' });
+        return;
+      }
+      const muniList = typeof municipios === 'string' && municipios.length > 0
+        ? municipios.split(',').map((s) => Number(s)).filter((n) => !isNaN(n))
+        : undefined;
+      const data = await MapaService.getRankingCargos(
+        String(uf), Number(ano),
+        muniList && muniList.length > 0 ? muniList : undefined,
+      );
+      res.json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getRankingCargosLocal(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { uf, municipio_tse, ano, nome_local, partido, sequencial } = req.query;
+      if (!uf || !municipio_tse || !ano || !nome_local) {
+        res.status(400).json({ error: 'Parâmetros obrigatórios: uf, municipio_tse, ano, nome_local' });
+        return;
+      }
+      const data = await MapaService.getRankingCargosLocal(
+        String(uf).toUpperCase(),
+        Number(municipio_tse),
+        Number(ano),
+        String(nome_local),
+        {
+          partido: partido ? String(partido) : undefined,
+          sequencial: sequencial ? String(sequencial) : undefined,
+        },
+      );
+      res.json(data);
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async getRankingLocais(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { uf, municipio_tse, cargo, ano, partido, sequencial } = req.query;
+      if (!uf || !municipio_tse || !cargo || !ano) {
+        res.status(400).json({ error: 'Parâmetros obrigatórios: uf, municipio_tse, cargo, ano' });
+        return;
+      }
+      const data = await MapaService.getRankingLocais(
+        String(uf).toUpperCase(),
+        Number(municipio_tse),
+        String(cargo),
+        Number(ano),
+        {
+          partido: partido ? String(partido) : undefined,
+          sequencial: sequencial ? String(sequencial) : undefined,
+        },
+      );
+      res.json(data);
     } catch (err) {
       next(err);
     }

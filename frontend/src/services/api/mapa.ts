@@ -11,7 +11,7 @@ export const mapaApi = {
     }),
   getFilteredDados: (
     candidatoId: string,
-    params: { estado?: string; partido?: string; ideologia?: string; candidatoSequencial?: string; candidatoNomeUrna?: string; cargo?: string },
+    params: { estado?: string; partido?: string; ideologia?: string; candidatoSequencial?: string; candidatoNomeUrna?: string; cargo?: string; ano?: number },
   ) =>
     api.get(`/mapa/filtro`, {
       params: {
@@ -22,14 +22,21 @@ export const mapaApi = {
         candidato_sequencial: params.candidatoSequencial || undefined,
         candidato_nome_urna: params.candidatoNomeUrna || undefined,
         cargo: params.cargo || undefined,
+        ano: params.ano || undefined,
       },
     }),
   getCamada: (candidatoId: string, nivel: 'macro' | 'micro', params?: Record<string, string | number>) =>
     api.get(`/mapa/camada`, { params: { candidato_id: candidatoId, nivel, ...params } }),
   getCamadaZona: (candidatoId: string, municipioTse: number) =>
     api.get(`/mapa/camada`, { params: { candidato_id: candidatoId, nivel: 'zona', municipio_tse: municipioTse } }),
-  getMunicipioDetalhes: (municipioTse: number, params: { uf: string; cargo: string; ano: number }) =>
-    api.get(`/mapa/municipio/${municipioTse}/detalhes`, { params }),
+  getMunicipioDetalhes: (municipioTse: number, params: { uf: string; cargo: string; ano: number; nomeLocal?: string }) =>
+    api.get(`/mapa/municipio/${municipioTse}/detalhes`, {
+      params: { uf: params.uf, cargo: params.cargo, ano: params.ano, nome_local: params.nomeLocal || undefined },
+    }),
+  getMunicipioCandidatos: (params: { municipioTse: number; uf: string; cargo: string; ano: number; partido?: string; nomeLocal?: string }) =>
+    api.get(`/mapa/municipio/${params.municipioTse}/candidatos`, {
+      params: { uf: params.uf, cargo: params.cargo, ano: params.ano, partido: params.partido || undefined, nome_local: params.nomeLocal || undefined },
+    }),
   getMunicipioCandidatosPorPartido: (
     municipioTse: number,
     siglaPartido: string,
@@ -38,6 +45,14 @@ export const mapaApi = {
   getZonaDetalhes: (zonaId: number) => api.get(`/mapa/zona/${zonaId}/detalhes`),
   getComparativo: (candidatoIds: string[]) =>
     api.get(`/mapa/comparativo?candidatos=${candidatoIds.join(',')}`),
+  getRankingCargos: (params: { uf: string; ano: number; municipios?: number[] }) =>
+    api.get(`/mapa/ranking/cargos`, {
+      params: {
+        uf: params.uf,
+        ano: params.ano,
+        municipios: params.municipios && params.municipios.length > 0 ? params.municipios.join(',') : undefined,
+      },
+    }),
   getRankingPartidos: (params: { uf: string; cargo: string; ano: number; municipios?: number[] }) =>
     api.get(`/mapa/ranking/partidos`, {
       params: {
@@ -60,4 +75,26 @@ export const mapaApi = {
     }),
   getVotosPorMunicipio: (params: { uf: string; cargo: string; ano: number; partido?: string; sequencial?: string }) =>
     api.get(`/mapa/ranking/votos-municipio`, { params }),
+  getRankingCargosLocal: (params: { uf: string; municipioTse: number; ano: number; nomeLocal: string; partido?: string; sequencial?: string }) =>
+    api.get(`/mapa/ranking/cargos-local`, {
+      params: {
+        uf: params.uf,
+        municipio_tse: params.municipioTse,
+        ano: params.ano,
+        nome_local: params.nomeLocal,
+        partido: params.partido || undefined,
+        sequencial: params.sequencial || undefined,
+      },
+    }),
+  getRankingLocais: (params: { uf: string; municipioTse: number; cargo: string; ano: number; partido?: string; sequencial?: string }) =>
+    api.get(`/mapa/ranking/locais`, {
+      params: {
+        uf: params.uf,
+        municipio_tse: params.municipioTse,
+        cargo: params.cargo,
+        ano: params.ano,
+        partido: params.partido || undefined,
+        sequencial: params.sequencial || undefined,
+      },
+    }),
 };
