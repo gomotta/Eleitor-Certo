@@ -18,6 +18,13 @@ function RequireCopiloto({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function DefaultRedirect() {
+  const token = useAuthStore((s) => s.accessToken);
+  const ativo = useCandidateStore((s) => s.coPilotoAtivo);
+  if (!token) return <Navigate to="/login" replace />;
+  return <Navigate to={ativo ? '/dashboard' : '/copiloto'} replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -52,7 +59,7 @@ export default function App() {
             </RequireAuth>
           }
         />
-        <Route path="*" element={<Navigate to="/copiloto" replace />} />
+        <Route path="*" element={<DefaultRedirect />} />
       </Routes>
     </BrowserRouter>
   );

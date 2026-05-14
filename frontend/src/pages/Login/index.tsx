@@ -4,7 +4,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useNavigate } from 'react-router-dom';
 import { authApi } from '@/services/api/auth';
+import { candidateApi } from '@/services/api/candidate';
 import { useAuthStore } from '@/stores/authStore';
+import { useCandidateStore } from '@/stores/candidateStore';
 import { LogoImg } from '@/components/Logo';
 
 const schema = z.object({
@@ -23,6 +25,7 @@ const FEATURES = [
 export default function LoginPage() {
   const navigate = useNavigate();
   const setTokens = useAuthStore((s) => s.setTokens);
+  const { activateCopiloto, setCandidateId } = useCandidateStore();
   const [showPassword, setShowPassword] = useState(false);
 
   const {
@@ -36,6 +39,17 @@ export default function LoginPage() {
     try {
       const res = await authApi.login(data.email, data.password);
       setTokens(res.data.accessToken, res.data.refreshToken);
+      try {
+        const me = await candidateApi.getMe();
+        if (me.data?.id) {
+          setCandidateId(me.data.id);
+          activateCopiloto();
+          navigate('/dashboard');
+          return;
+        }
+      } catch {
+        // sem copiloto configurado — vai para o wizard
+      }
       navigate('/copiloto');
     } catch {
       setError('root', { message: 'E-mail ou senha inválidos' });

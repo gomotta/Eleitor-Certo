@@ -73,6 +73,7 @@ export default function MapaPage() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [zoomTarget, setZoomTarget] = useState<GeoTarget | undefined>();
   const [geoFilter, setGeoFilter] = useState<GeoTarget | undefined>();
+  const [dimFilter, setDimFilter] = useState<GeoTarget | undefined>(); // só do filtro explícito
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightTableOpen, setRightTableOpen] = useState(false);
   const [aiChatOpen, setAiChatOpen] = useState(false);
@@ -139,6 +140,7 @@ export default function MapaPage() {
     setMapData(newData);
     setZoomTarget(geo);
     setGeoFilter(geo);
+    setDimFilter(geo);
     setFilterOpen(false);
   };
 
@@ -146,6 +148,7 @@ export default function MapaPage() {
     setMapData(originalData);
     setZoomTarget(undefined);
     setGeoFilter(undefined);
+    setDimFilter(undefined);
     setFilterOpen(false);
     setRightTableOpen(false);
   };
@@ -368,8 +371,9 @@ export default function MapaPage() {
           zoomTarget={zoomTarget}
           filterOpen={filterOpen}
           hideLegend={rightTableOpen || filterOpen || aiChatOpen}
-          hideAttribution={aiChatOpen}
+          hideAttribution={aiChatOpen || filterOpen || rightTableOpen}
           colorMode={colorMode}
+          geoFilter={dimFilter}
           onGeoFocusChange={(geo) => {
             if (geo) setGeoFilter(geo);
           }}

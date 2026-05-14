@@ -203,11 +203,15 @@ export default function MapRightTable({
   ): Promise<CustomNodeRow[]> => {
     if (!mapData) return [];
     const { uf, ano } = mapData.metadata;
-    // Cargo do contexto pai sobrepõe o cargo do mapData — assim, dentro de uma
-    // análise "todos os cargos" o usuário pode primeiro filtrar por cargo e ter
-    // todos os rankings subsequentes restritos àquela eleição.
     const cargo = parentCtx.cargo ?? mapData.metadata.cargo;
     const hasCargoOverride = parentCtx.cargo != null && parentCtx.cargo !== mapData.metadata.cargo;
+
+    // Municípios da região filtrada pelo painel — usado para escopar rankings
+    // quando não há geo especificada no contexto do nó pai.
+    const geoMuniList: number[] | undefined =
+      filteredMunicipios.length < mapData.features.length && filteredMunicipios.length > 0
+        ? filteredMunicipios.map((m) => m.municipioTse)
+        : undefined;
 
     // ── Cargo dimension ──
     if (dim === 'cargo') {
@@ -238,7 +242,7 @@ export default function MapRightTable({
             ? getMuniTseForGeo(parentCtx.macroId, 'macro', tseMicroMap, mapData.features.map((f) => f.properties.municipioTse))
             : parentCtx.municipioTse != null
               ? [parentCtx.municipioTse]
-              : undefined;
+              : geoMuniList;
       const r = await mapaApi.getRankingCargos({ uf, ano, municipios: muniListCtx });
       return (r.data as CargoRow[]).map((c) => ({
         key: nodeKey(parentCtx, dim, c.cargo),
@@ -316,7 +320,7 @@ export default function MapRightTable({
         ? getMuniTseForGeo(parentCtx.microId, 'micro', tseMicroMap, allMuniTseCodes)
         : parentCtx.macroId != null
           ? getMuniTseForGeo(parentCtx.macroId, 'macro', tseMicroMap, allMuniTseCodes)
-          : undefined;
+          : geoMuniList;
 
     // ── Local de votação dimension ──
     if (dim === 'local') {

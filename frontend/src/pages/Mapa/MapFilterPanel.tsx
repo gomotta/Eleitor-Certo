@@ -198,19 +198,6 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   }, [mapData, selectedMicro]);
 
-  // Reset quando abre o painel
-  useEffect(() => {
-    if (open) {
-      setSelectedMacro(null);
-      setSelectedMicro(null);
-      setSelectedCidade(null);
-      setIdeologia(null);
-      setPartido(null);
-      setCandidatoQuery('');
-      setCandidatoSelecionado(null);
-      setSugestoes([]);
-    }
-  }, [open]);
 
   const ideologias = useMemo(
     () => [...new Set(partidos.map((p) => p.ideologia).filter(Boolean))].sort(),
@@ -448,7 +435,7 @@ export default function MapFilterPanel({ open, onClose, mapData, defaultUF, cand
 
         {/* Footer */}
         <div className="border-t border-gray-100 p-3 flex gap-3">
-          <button type="button" onClick={onReset} className="flex-1 btn-secondary text-sm">
+          <button type="button" onClick={() => { setSelectedMacro(null); setSelectedMicro(null); setSelectedCidade(null); setIdeologia(null); setPartido(null); setCandidatoQuery(''); setCandidatoSelecionado(null); setSugestoes([]); onReset(); }} className="flex-1 btn-secondary text-sm">
             Resetar
           </button>
           <button

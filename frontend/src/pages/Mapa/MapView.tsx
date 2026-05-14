@@ -22,7 +22,9 @@ interface Props {
   zoomTarget?: GeoTarget;
   filterOpen?: boolean;
   hideLegend?: boolean;
+  hideAttribution?: boolean;
   colorMode?: ColorMode;
+  geoFilter?: GeoTarget;
   onGeoFocusChange?: (geo?: GeoTarget) => void;
 }
 
@@ -125,16 +127,26 @@ function getPct(
 
 // ── Municipality bubbles ──────────────────────────────────────────────────────
 
+function isInsideGeo(microRegiaoId: number | null, municipioTse: number, geoFilter?: GeoTarget): boolean {
+  if (!geoFilter) return true;
+  if (geoFilter.type === 'cidade') return municipioTse === geoFilter.municipioTse;
+  if (geoFilter.type === 'micro') return microRegiaoId === geoFilter.microId;
+  if (geoFilter.type === 'macro' && geoFilter.microIds?.length) return !!microRegiaoId && geoFilter.microIds.includes(microRegiaoId);
+  return true;
+}
+
 function MunicipioLayer({
   features,
   partido,
   mode,
   totalVotosPartido,
+  geoFilter,
 }: {
   features: any[];
   partido: string;
   mode: ColorMode;
   totalVotosPartido: number;
+  geoFilter?: GeoTarget;
 }) {
   const maxVotos = useMemo(() => Math.max(...features.map((f) => f.properties.votosPartido), 1), [features]);
   const getRadius = (votos: number) => 6 + Math.sqrt(votos / maxVotos) * 22;
@@ -157,12 +169,16 @@ function MunicipioLayer({
         const pct = mode === 'partido'
           ? (totalVotosPartido > 0 ? (p.votosPartido / totalVotosPartido) * 100 : 0)
           : p.percentual;
+        const inside = isInsideGeo(p.microRegiaoId, p.municipioTse, geoFilter);
         return (
           <CircleMarker
             key={p.municipioTse}
             center={[lat, lng]}
             radius={getRadius(p.votosPartido)}
-            pathOptions={{ fillColor: getColor(pct, mode, scale.max), fillOpacity: 0.82, color: '#fff', weight: 0.8 }}
+            pathOptions={inside
+              ? { fillColor: getColor(pct, mode, scale.max), fillOpacity: 0.82, color: '#fff', weight: 0.8 }
+              : { fillColor: '#aaa', fillOpacity: 0.15, color: '#ccc', weight: 0.5 }
+            }
             eventHandlers={{
               mouseover: (e) => {
                 const el = document.getElementById('mapa-tooltip');
@@ -212,6 +228,8 @@ interface PoligonoProps {
   statsMap?: StatsMap;
   mode: ColorMode;
   totalVotosPartido: number;
+  geoFilter?: GeoTarget;
+  showingMunicipios?: boolean;
   onClickRegiao?: (feature: GeoJSON.Feature, layer: L.Layer) => void;
 }
 
@@ -238,13 +256,17 @@ const STYLE_DEFAULT = (nivel: 'macro' | 'micro', pct: number, mode: ColorMode, m
 
 const STYLE_ACTIVE = { fillOpacity: 0, color: '#555', weight: 2 };
 
-function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode, totalVotosPartido, onClickRegiao }: PoligonoProps) {
+function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode, totalVotosPartido, geoFilter, showingMunicipios, onClickRegiao }: PoligonoProps) {
   const map = useMap();
   const geoJsonRef = useRef<L.GeoJSON>(null);
   const activeMicroIdRef = useRef<number | null>(activeMicroId ?? null);
   useEffect(() => { activeMicroIdRef.current = activeMicroId ?? null; }, [activeMicroId]);
   const statsMapRef = useRef(statsMap);
   useEffect(() => { statsMapRef.current = statsMap; }, [statsMap]);
+  const geoFilterRef = useRef(geoFilter);
+  useEffect(() => { geoFilterRef.current = geoFilter; }, [geoFilter]);
+  const showingMunicipiosRef = useRef(showingMunicipios ?? false);
+  useEffect(() => { showingMunicipiosRef.current = showingMunicipios ?? false; }, [showingMunicipios]);
   const modeRef = useRef(mode);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   const totalVotosPartidoRef = useRef(totalVotosPartido);
@@ -261,8 +283,25 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode,
   const getStyle = (feature: GeoJSON.Feature | undefined, activeId: number | null | undefined) => {
     const regiaoId = (feature?.properties as any)?.regiaoId as number | undefined;
     const pct = getPct(feature, statsMapRef.current, modeRef.current, totalVotosPartidoRef.current);
+    const gf = geoFilterRef.current; // sempre o valor atual, mesmo dentro de closures memoizadas
+
+    if (gf && regiaoId != null) {
+      const isFiltered =
+        (gf.type === 'micro' && nivel === 'micro' && regiaoId === gf.microId) ||
+        (gf.type === 'macro' && nivel === 'macro' && regiaoId === gf.macroId) ||
+        (gf.type === 'macro' && nivel === 'micro' && !!gf.microIds?.includes(regiaoId));
+
+      // No nível de municípios, deixa o polígono transparente para os círculos aparecerem
+      if (isFiltered && showingMunicipiosRef.current) return STYLE_ACTIVE;
+      // Nos demais níveis, mantém a cor sempre
+      if (isFiltered) return STYLE_DEFAULT(nivel, pct, modeRef.current, scaleRef.current.max);
+      // Regiões fora do filtro ficam dimadas
+      return { fillColor: '#aaa', fillOpacity: 0.1, color: '#ccc', weight: 0.5 };
+    }
+
     const isActive = nivel === 'micro' && activeId != null && regiaoId === activeId;
-    return isActive ? STYLE_ACTIVE : STYLE_DEFAULT(nivel, pct, modeRef.current, scaleRef.current.max);
+    if (isActive) return STYLE_ACTIVE;
+    return STYLE_DEFAULT(nivel, pct, modeRef.current, scaleRef.current.max);
   };
 
   // Imperatively update styles when activeMicroId changes (micro only)
@@ -275,7 +314,7 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode,
     });
   }, [activeMicroId, nivel]);
 
-  // Imperatively update ALL styles when statsMap or mode changes
+  // Imperatively update ALL styles when statsMap, mode or geoFilter changes
   useEffect(() => {
     const layer = geoJsonRef.current;
     if (!layer) return;
@@ -283,7 +322,7 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode,
       const feature = (sublayer as any).feature as GeoJSON.Feature;
       (sublayer as L.Path).setStyle(getStyle(feature, activeMicroIdRef.current));
     });
-  }, [statsMap, mode, totalVotosPartido, nivel]);
+  }, [statsMap, mode, totalVotosPartido, nivel, geoFilter, showingMunicipios]);
 
   const styleFeature = useCallback(
     (feature?: GeoJSON.Feature) => getStyle(feature, activeMicroId),
@@ -320,7 +359,13 @@ function PoligonoLayer({ geoData, nivel, partido, activeMicroId, statsMap, mode,
           el.style.top = e.originalEvent.clientY - 10 + 'px';
         }
         const isActive = nivel === 'micro' && regiaoId === activeMicroIdRef.current && activeMicroIdRef.current != null;
-        if (!isActive) (layer as L.Path).setStyle({ weight: 2.5, color: '#333' });
+        const gf = geoFilterRef.current;
+        const isDimmed = gf && regiaoId != null && (
+          (gf.type === 'micro' && nivel === 'micro' && regiaoId !== gf.microId) ||
+          (gf.type === 'macro' && nivel === 'macro' && regiaoId !== gf.macroId) ||
+          (gf.type === 'macro' && nivel === 'micro' && gf.microIds?.length && !gf.microIds.includes(regiaoId))
+        );
+        if (!isActive && !isDimmed) (layer as L.Path).setStyle({ weight: 2.5, color: '#333' });
       });
 
       layer.on('mousemove', (e: L.LeafletMouseEvent) => {
@@ -396,6 +441,7 @@ function MapLayers({
   onGeoFocusChange,
   colorMode,
   onScaleChange,
+  geoFilter,
 }: {
   mapData: MapData;
   onNivelChange?: (n: LayerNivel) => void;
@@ -403,6 +449,7 @@ function MapLayers({
   onGeoFocusChange?: (geo?: GeoTarget) => void;
   colorMode: ColorMode;
   onScaleChange?: (scale: ScaleParams) => void;
+  geoFilter?: GeoTarget;
 }) {
   const map = useMap();
   const { candidateId } = useCandidateStore();
@@ -512,9 +559,11 @@ function MapLayers({
   }, [zoomTarget]);
 
   const handleZoomChange = useCallback((nivel: LayerNivel) => {
-    setCurrentNivel(nivel);
-    onNivelChange?.(nivel);
-  }, [onNivelChange]);
+    // Quando há filtro explícito de micro/macro, não permite subir para mesorregião
+    const effective = geoFilter && nivel === 'macro' ? 'micro' : nivel;
+    setCurrentNivel(effective);
+    onNivelChange?.(effective);
+  }, [onNivelChange, geoFilter]);
 
   // Detect which micro region the map center is over; clear when zooming out
   const handleCenter = useCallback(
@@ -651,6 +700,8 @@ function MapLayers({
           statsMap={macroStats}
           mode={colorMode}
           totalVotosPartido={totalVotosPartido}
+          geoFilter={geoFilter}
+          showingMunicipios={showCidade}
           onClickRegiao={handleClickMacro}
         />
       )}
@@ -664,6 +715,8 @@ function MapLayers({
           statsMap={microStats}
           mode={colorMode}
           totalVotosPartido={totalVotosPartido}
+          geoFilter={geoFilter}
+          showingMunicipios={showCidade}
           onClickRegiao={handleClickMicro}
         />
       )}
@@ -674,6 +727,7 @@ function MapLayers({
           partido={partido}
           mode={colorMode}
           totalVotosPartido={totalVotosPartido}
+          geoFilter={geoFilter}
         />
       )}
     </>
@@ -763,6 +817,7 @@ function MapLayersWithNivelState({
   hideLegend,
   onGeoFocusChange,
   colorMode,
+  geoFilter,
 }: {
   mapData: MapData;
   zoomTarget?: GeoTarget;
@@ -770,6 +825,7 @@ function MapLayersWithNivelState({
   hideLegend?: boolean;
   onGeoFocusChange?: (geo?: GeoTarget) => void;
   colorMode: ColorMode;
+  geoFilter?: GeoTarget;
 }) {
   const [nivel, setNivel] = useState<LayerNivel>('macro');
   const [scale, setScale] = useState<ScaleParams>({ max: colorMode === 'geral' ? 40 : 1, breaks: [0, 0, 0, 0, 1] });
@@ -783,6 +839,7 @@ function MapLayersWithNivelState({
         onGeoFocusChange={onGeoFocusChange}
         colorMode={colorMode}
         onScaleChange={setScale}
+        geoFilter={geoFilter}
       />
       {!hideLegend && (
         <MapLegend
@@ -798,7 +855,7 @@ function MapLayersWithNivelState({
   );
 }
 
-export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, hideAttribution, colorMode = 'partido', onGeoFocusChange }: Props & { hideAttribution?: boolean }) {
+export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, hideAttribution, colorMode = 'partido', geoFilter, onGeoFocusChange }: Props) {
   return (
     <MapContainer center={[-18.5, -44.0]} zoom={6} className="h-full w-full" zoomControl>
       {hideAttribution && (
@@ -817,6 +874,7 @@ export default function MapView({ mapData, zoomTarget, filterOpen, hideLegend, h
           hideLegend={hideLegend}
           onGeoFocusChange={onGeoFocusChange}
           colorMode={colorMode}
+          geoFilter={geoFilter}
         />
       )}
     </MapContainer>

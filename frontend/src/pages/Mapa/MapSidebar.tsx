@@ -127,21 +127,54 @@ function CargoPicker({ cargo, cargos, onChange }: { cargo: string; cargos: strin
 export default function MapSidebar({ mapData, anosDisponiveis, selectedAno, selectedCargo, cargosDisponiveis, onYearChange, onCargoChange }: Props) {
   const navigate = useNavigate();
 
+  // IDs de microrregiões correspondentes à região configurada no copiloto
+  const [copilotoMicroIds, setCopilotoMicroIds] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    const uf = mapData?.metadata.uf;
+    const microrregiao = mapData?.metadata.microrregiao;
+    const macrorregiao = mapData?.metadata.macrorregiao;
+    if (!uf || (!microrregiao && !macrorregiao)) { setCopilotoMicroIds(new Set()); return; }
+
+    fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/microrregioes`)
+      .then((r) => r.json())
+      .then((data: any[]) => {
+        if (microrregiao) {
+          const match = data.find((m) => m.nome.toLowerCase() === microrregiao.toLowerCase());
+          setCopilotoMicroIds(match ? new Set([match.id]) : new Set());
+        } else if (macrorregiao) {
+          const ids = data
+            .filter((m) => m.mesorregiao.nome.toLowerCase() === macrorregiao.toLowerCase())
+            .map((m) => m.id);
+          setCopilotoMicroIds(new Set(ids));
+        }
+      })
+      .catch(() => setCopilotoMicroIds(new Set()));
+  }, [mapData?.metadata.uf, mapData?.metadata.microrregiao, mapData?.metadata.macrorregiao]);
+
   const stats = useMemo(() => {
     if (!mapData) return null;
     const { features, metadata } = mapData;
 
-    const totalPartido = metadata.totalVotosPartido;
-    const totalGeral = features.reduce((s, f) => s + f.properties.votosTotal, 0);
+    let visibleFeatures = features;
+    if (copilotoMicroIds.size > 0) {
+      const filtered = features.filter(
+        (f) => f.properties.microRegiaoId != null && copilotoMicroIds.has(f.properties.microRegiaoId),
+      );
+      if (filtered.length > 0) visibleFeatures = filtered;
+    }
+
+    const totalPartido = visibleFeatures.reduce((s, f) => s + f.properties.votosPartido, 0);
+    const totalGeral = visibleFeatures.reduce((s, f) => s + f.properties.votosTotal, 0);
     const sharePartido = totalGeral > 0 ? (totalPartido / totalGeral) * 100 : 0;
 
-    const top10 = [...features]
+    const top10 = [...visibleFeatures]
       .sort((a, b) => b.properties.votosPartido - a.properties.votosPartido)
       .slice(0, 10)
       .map((f) => f.properties);
 
     return { totalPartido, totalGeral, sharePartido, top10 };
-  }, [mapData]);
+  }, [mapData, copilotoMicroIds]);
 
   const regiao = mapData?.metadata.microrregiao ?? mapData?.metadata.macrorregiao;
 
@@ -222,9 +255,6 @@ export default function MapSidebar({ mapData, anosDisponiveis, selectedAno, sele
                 }}
               />
             </div>
-            <p className="text-[10px] text-gray-400 mt-1">
-              de {stats.totalGeral.toLocaleString('pt-BR')} votos válidos no estado
-            </p>
           </div>
 
           {/* Top 10 */}

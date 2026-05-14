@@ -208,34 +208,23 @@ export default function Block3Reduto({ onNext, onBack }: Props) {
             ) : macroRegioes.length === 0 ? (
               <p className="text-sm text-gray-400 mt-1">Nenhuma macrorregião encontrada para este estado.</p>
             ) : (
-              <div className="mt-2 grid grid-cols-1 gap-1.5">
-                {macroRegioes.map((m) => {
-                  const checked = (formData.macroRegiao ?? []).includes(m.nome);
-                  return (
-                    <label
-                      key={m.id}
-                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg border cursor-pointer transition-all ${
-                        checked
-                          ? 'border-primary-300 bg-primary-50'
-                          : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                        checked ? 'bg-primary-600 border-primary-600' : 'border-gray-300 bg-white'
-                      }`}>
-                        {checked && (
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
-                      <input type="checkbox" checked={checked} onChange={() => handleMacroChange(m)} className="sr-only" />
-                      <span className={`text-sm ${checked ? 'text-primary-800 font-medium' : 'text-gray-700'}`}>
-                        {m.nome}
-                      </span>
-                    </label>
-                  );
-                })}
+              <div className="relative mt-1">
+                <select
+                  value={(formData.macroRegiao ?? [])[0] ?? ''}
+                  onChange={(e) => {
+                    const m = macroRegioes.find((r) => r.nome === e.target.value);
+                    if (m) handleMacroChange(m);
+                  }}
+                  className="input appearance-none pr-10 cursor-pointer"
+                >
+                  <option value="">Selecione a macrorregião</option>
+                  {macroRegioes.map((m) => (
+                    <option key={m.id} value={m.nome}>{m.nome}</option>
+                  ))}
+                </select>
+                <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                  <ChevronDown />
+                </div>
               </div>
             )}
           </div>
@@ -250,39 +239,20 @@ export default function Block3Reduto({ onNext, onBack }: Props) {
               {loadingMicro ? <Spinner /> : microRegioes.length === 0 ? (
                 <p className="text-sm text-gray-400 mt-1">Nenhuma microrregião disponível.</p>
               ) : (
-                <div className="mt-2 grid grid-cols-1 gap-1.5">
-                  {microRegioes.map((m) => {
-                    const isChecked = (formData.microRegiao ?? []).includes(m.nome);
-                    return (
-                      <label
-                        key={m.id}
-                        className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg border cursor-pointer transition-all ${
-                          isChecked
-                            ? 'border-primary-300 bg-primary-50'
-                            : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                          isChecked ? 'bg-primary-600 border-primary-600' : 'border-gray-300 bg-white'
-                        }`}>
-                          {isChecked && (
-                            <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => updateFormData({ microRegiao: isChecked ? [] : [m.nome] })}
-                          className="sr-only"
-                        />
-                        <span className={`text-sm ${isChecked ? 'text-primary-800 font-medium' : 'text-gray-700'}`}>
-                          {m.nome}
-                        </span>
-                      </label>
-                    );
-                  })}
+                <div className="relative mt-1">
+                  <select
+                    value={(formData.microRegiao ?? [])[0] ?? ''}
+                    onChange={(e) => updateFormData({ microRegiao: e.target.value ? [e.target.value] : [] })}
+                    className="input appearance-none pr-10 cursor-pointer"
+                  >
+                    <option value="">Selecione a microrregião</option>
+                    {microRegioes.map((m) => (
+                      <option key={m.id} value={m.nome}>{m.nome}</option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                    <ChevronDown />
+                  </div>
                 </div>
               )}
             </div>

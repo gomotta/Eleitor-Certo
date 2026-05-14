@@ -21,7 +21,6 @@ const schema = z.object({
   tituloEleitor: z
     .string()
     .refine((v) => v.replace(/\D/g, '').length === 12, 'Deve ter 12 dígitos'),
-  emailContato: z.string().email('E-mail inválido'),
   telefone: z
     .string()
     .regex(/^\(\d{2}\)\s\d{4,5}-\d{4}$/, 'Use o formato (00) 00000-0000'),
@@ -76,7 +75,6 @@ export default function Block1Identificacao({ onNext }: Props) {
       partidoNome:   formData.partidoNome   ?? '',
       cpf:           formData.cpf           ?? '',
       tituloEleitor: formData.tituloEleitor ?? '',
-      emailContato:  formData.emailContato  ?? '',
       telefone:      formData.telefone      ?? '',
     },
   });
@@ -182,18 +180,7 @@ export default function Block1Identificacao({ onNext }: Props) {
 
       {/* Contato */}
       <FieldGroup label="Contato">
-        <div>
-          <label className="label">E-mail *</label>
-          <input
-            {...register('emailContato')}
-            type="email"
-            className="input"
-            placeholder="contato@exemplo.com"
-          />
-          {errors.emailContato && <p className="error">{errors.emailContato.message}</p>}
-        </div>
-
-        <div>
+        <div className="md:col-span-2">
           <label className="label">Telefone (com DDD) *</label>
           <input
             {...register('telefone')}

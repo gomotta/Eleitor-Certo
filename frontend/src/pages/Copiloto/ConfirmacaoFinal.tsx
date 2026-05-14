@@ -101,8 +101,7 @@ export default function ConfirmacaoFinal({ onBack, onEditStep }: Props) {
         <Row label="Nome completo" value={formData.nomeCompleto} />
         <Row label="Nome de urna" value={formData.nomeUrna} />
         <Row label="Partido" value={`${formData.partidoSigla} — ${formData.partidoNome}`} />
-        <Row label="E-mail" value={formData.emailContato} />
-        <Row label="Telefone" value={formData.telefone} />
+<Row label="Telefone" value={formData.telefone} />
       </Section>
 
       <Section title="Cargo disputado" step={2} onEdit={() => onEditStep(2)}>
